@@ -1,3 +1,4 @@
 target/
 backend/ull-fleet-server/.env
 backend/ull-fleet-server/data/
+*.bin

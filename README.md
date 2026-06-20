@@ -10,7 +10,7 @@ Rust workspace for fleet-management services.
 
 - `src/main.rs`: loads config, builds the app, and starts Axum.
 - `src/lib.rs`: composition root for wiring the OTA service.
-- `src/api`: HTTP routes, handlers, and shared Axum state.
+- `src/api`: routes, handlers, request extractors, and shared Axum state.
 - `src/domain`: OTA business flow and domain models.
 - `src/infra`: SQLite persistence and filesystem storage.
 
@@ -38,7 +38,7 @@ Flow:
 Upload example:
 
 ```sh
-curl --data-binary @ota.bin http://127.0.0.1:3000/api/upload
+curl -H "Content-Type: application/octet-stream" --data-binary @ota.bin http://127.0.0.1:3000/api/upload
 ```
 
 ## Development

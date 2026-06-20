@@ -12,6 +12,8 @@ pub type AppResult<T> = Result<T, AppError>;
 pub enum AppError {
     #[error("{0}")]
     Validation(String),
+    #[error("{0}")]
+    UnsupportedMediaType(String),
     #[error(transparent)]
     Internal(#[from] AnyhowError),
 }
@@ -29,6 +31,9 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
             Self::Validation(message) => (StatusCode::BAD_REQUEST, message).into_response(),
+            Self::UnsupportedMediaType(message) => {
+                (StatusCode::UNSUPPORTED_MEDIA_TYPE, message).into_response()
+            }
             Self::Internal(err) => {
                 error!(error = ?err, "internal server error");
                 (

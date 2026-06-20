@@ -1,10 +1,10 @@
 use anyhow::Context;
-use axum::body::{Body, to_bytes};
-use axum::extract::{Request, State};
+use axum::body::Body;
+use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 
-use crate::api::MAX_UPLOAD_BYTES;
+use crate::api::extractors::OtaUpload;
 use crate::domain::ota::{OtaService, PendingUpdate, ServedUpdate};
 use crate::error::AppResult;
 
@@ -14,20 +14,16 @@ pub async fn hello() -> &'static str {
 
 #[axum::debug_handler]
 pub async fn index(State(ota_service): State<OtaService>) -> AppResult<Html<String>> {
-    let pending = ota_service.pending_update()?;
+    let pending = ota_service.pending_update().await?;
     Ok(Html(index_html(pending.as_ref())))
 }
 
 #[axum::debug_handler]
 pub async fn upload_update(
     State(ota_service): State<OtaService>,
-    request: Request,
+    OtaUpload(bytes): OtaUpload,
 ) -> AppResult<(StatusCode, String)> {
-    let bytes = to_bytes(request.into_body(), MAX_UPLOAD_BYTES)
-        .await
-        .context("failed to read upload body")?;
-
-    let pending = ota_service.upload(bytes.as_ref())?;
+    let pending = ota_service.upload(bytes).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -40,7 +36,7 @@ pub async fn upload_update(
 
 #[axum::debug_handler]
 pub async fn download_update(State(ota_service): State<OtaService>) -> AppResult<Response> {
-    let Some(served_update) = ota_service.take_pending_update()? else {
+    let Some(served_update) = ota_service.take_pending_update().await? else {
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
 
@@ -96,7 +92,7 @@ fn index_html(pending: Option<&PendingUpdate>) -> String {
   </form>
   <p id=\"upload-status\"></p>
   <p>API upload example:</p>
-  <pre>curl --data-binary @ota.bin http://127.0.0.1:3000/api/upload</pre>
+  <pre>curl -H "Content-Type: application/octet-stream" --data-binary @ota.bin http://127.0.0.1:3000/api/upload</pre>
   <script>
     const form = document.getElementById('upload-form');
     const fileInput = document.getElementById('ota-file');

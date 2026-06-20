@@ -1,6 +1,6 @@
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -17,6 +17,7 @@ async fn upload_then_download_serves_the_update_once() {
         .clone()
         .oneshot(
             Request::post("/api/upload")
+                .header(header::CONTENT_TYPE, "application/octet-stream")
                 .body(Body::from(payload.clone()))
                 .expect("upload request should be valid"),
         )
@@ -77,6 +78,7 @@ async fn upload_rejects_empty_bodies() {
     let response = app
         .oneshot(
             Request::post("/api/upload")
+                .header(header::CONTENT_TYPE, "application/octet-stream")
                 .body(Body::empty())
                 .expect("empty upload request should be valid"),
         )
@@ -90,6 +92,33 @@ async fn upload_rejects_empty_bodies() {
         .expect("error body should be readable");
 
     assert_eq!(body.as_ref(), b"uploaded file is empty");
+}
+
+#[tokio::test]
+async fn upload_rejects_non_binary_content_type() {
+    let fixture = TestApp::new();
+    let app = fixture.app();
+
+    let response = app
+        .oneshot(
+            Request::post("/api/upload")
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body(Body::from("not-binary"))
+                .expect("text upload request should be valid"),
+        )
+        .await
+        .expect("text upload request should succeed");
+
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("error body should be readable");
+
+    assert_eq!(
+        body.as_ref(),
+        b"expected Content-Type: application/octet-stream"
+    );
 }
 
 struct TestApp {
