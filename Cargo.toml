@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["backend/ull-fleet-server"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/ullnorse/ull-fleet-rs"
+rust-version = "1.88"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
