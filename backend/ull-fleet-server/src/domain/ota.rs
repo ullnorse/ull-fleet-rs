@@ -2,7 +2,6 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::task;
 use tracing::{info, warn};
@@ -15,7 +14,17 @@ pub struct PendingUpdate {
     pub stored_path: String,
     pub size_bytes: u64,
     pub sha256_hex: String,
+    /// Ed25519 signature from `ull-fleet-sign`, as hex. Empty only for rows
+    /// stored before signatures existed.
+    pub signature_hex: String,
     pub created_at: String,
+}
+
+/// An uploaded image with the signature that came with it.
+#[derive(Debug)]
+pub struct SignedUpload {
+    pub bytes: Vec<u8>,
+    pub signature: [u8; 64],
 }
 
 #[derive(Debug)]
@@ -28,6 +37,8 @@ pub struct ServedUpdate {
 pub enum UploadUpdateError {
     #[error("uploaded file is empty")]
     EmptyFile,
+    #[error("signature does not verify against the server's OTA_PUBLIC_KEY")]
+    BadSignature,
     #[error(transparent)]
     Unknown(#[from] anyhow::Error),
 }
@@ -36,13 +47,19 @@ pub enum UploadUpdateError {
 pub struct OtaService {
     repository: PendingUpdateRepository,
     storage: UpdateStorage,
+    public_key: Option<[u8; 32]>,
 }
 
 impl OtaService {
-    pub fn new(repository: PendingUpdateRepository, storage: UpdateStorage) -> Self {
+    pub fn new(
+        repository: PendingUpdateRepository,
+        storage: UpdateStorage,
+        public_key: Option<[u8; 32]>,
+    ) -> Self {
         Self {
             repository,
             storage,
+            public_key,
         }
     }
 
@@ -65,11 +82,12 @@ impl OtaService {
         .await
     }
 
-    pub async fn upload(&self, bytes: Vec<u8>) -> Result<PendingUpdate, UploadUpdateError> {
+    pub async fn upload(&self, upload: SignedUpload) -> Result<PendingUpdate, UploadUpdateError> {
         let repository = self.repository.clone();
         let storage = self.storage.clone();
+        let public_key = self.public_key;
 
-        task::spawn_blocking(move || upload_sync(repository, storage, bytes))
+        task::spawn_blocking(move || upload_sync(repository, storage, public_key, upload))
             .await
             .context("OTA upload task panicked")?
     }
@@ -98,10 +116,18 @@ where
 fn upload_sync(
     repository: PendingUpdateRepository,
     storage: UpdateStorage,
-    bytes: Vec<u8>,
+    public_key: Option<[u8; 32]>,
+    upload: SignedUpload,
 ) -> Result<PendingUpdate, UploadUpdateError> {
+    let SignedUpload { bytes, signature } = upload;
     if bytes.is_empty() {
         return Err(UploadUpdateError::EmptyFile);
+    }
+
+    if let Some(public_key) = public_key
+        && ull_fleet_sign::verify_image(&public_key, &bytes, &signature).is_err()
+    {
+        return Err(UploadUpdateError::BadSignature);
     }
 
     let timestamp = unix_timestamp_secs();
@@ -114,7 +140,8 @@ fn upload_sync(
         filename: stored_name,
         stored_path: stored_path.to_string_lossy().into_owned(),
         size_bytes: bytes.len() as u64,
-        sha256_hex: sha256_hex(&bytes),
+        sha256_hex: ull_fleet_sign::to_hex(&ull_fleet_sign::sha256(&bytes)),
+        signature_hex: ull_fleet_sign::to_hex(&signature),
         created_at: timestamp.to_string(),
     };
 
@@ -190,17 +217,4 @@ fn unix_timestamp_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before unix epoch")
         .as_secs()
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut hex = String::with_capacity(digest.len() * 2);
-
-    for byte in digest {
-        use std::fmt::Write as _;
-
-        let _ = write!(hex, "{byte:02x}");
-    }
-
-    hex
 }

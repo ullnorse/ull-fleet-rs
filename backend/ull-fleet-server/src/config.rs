@@ -9,6 +9,9 @@ pub struct Config {
     pub listen_addr: SocketAddr,
     pub database_path: PathBuf,
     pub uploads_dir: PathBuf,
+    /// When set, uploads whose signature does not verify against this key are
+    /// rejected. The device checks again with its own built-in key either way.
+    pub ota_public_key: Option<[u8; 32]>,
 }
 
 impl Config {
@@ -28,6 +31,10 @@ impl Config {
                 optional_env("UPLOADS_DIR")
                     .unwrap_or_else(|| "backend/ull-fleet-server/data/uploads".to_string()),
             ),
+            ota_public_key: optional_env("OTA_PUBLIC_KEY")
+                .map(|key| ull_fleet_sign::from_hex(&key))
+                .transpose()
+                .context("failed to parse OTA_PUBLIC_KEY")?,
         })
     }
 }
@@ -48,6 +55,7 @@ fn built_env(name: &str) -> Option<&'static str> {
         "LISTEN_ADDR" => option_env!("LISTEN_ADDR"),
         "DATABASE_PATH" => option_env!("DATABASE_PATH"),
         "UPLOADS_DIR" => option_env!("UPLOADS_DIR"),
+        "OTA_PUBLIC_KEY" => option_env!("OTA_PUBLIC_KEY"),
         _ => None,
     }
 }

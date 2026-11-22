@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["backend/ull-fleet-server"]
+members = ["backend/ull-fleet-server", "tools/ull-fleet-sign"]
 
 [workspace.package]
 edition = "2024"

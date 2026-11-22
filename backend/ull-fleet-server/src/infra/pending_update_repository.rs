@@ -33,11 +33,27 @@ impl PendingUpdateRepository {
                 stored_path TEXT NOT NULL,
                 size_bytes INTEGER NOT NULL,
                 sha256_hex TEXT NOT NULL,
+                signature_hex TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             )",
             [],
         )
         .context("failed to create pending_update table")?;
+
+        // Databases created before signed uploads lack the column.
+        let has_signature = conn
+            .prepare(
+                "SELECT 1 FROM pragma_table_info('pending_update') WHERE name = 'signature_hex'",
+            )
+            .and_then(|mut statement| statement.exists([]))
+            .context("failed to inspect pending_update columns")?;
+        if !has_signature {
+            conn.execute(
+                "ALTER TABLE pending_update ADD COLUMN signature_hex TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .context("failed to add signature_hex column")?;
+        }
 
         Ok(())
     }
@@ -46,7 +62,7 @@ impl PendingUpdateRepository {
         let conn = self.connection()?;
         let pending = conn
             .query_row(
-                "SELECT filename, stored_path, size_bytes, sha256_hex, created_at
+                "SELECT filename, stored_path, size_bytes, sha256_hex, signature_hex, created_at
                  FROM pending_update
                  WHERE id = 1",
                 [],
@@ -56,7 +72,8 @@ impl PendingUpdateRepository {
                         stored_path: row.get(1)?,
                         size_bytes: row.get(2)?,
                         sha256_hex: row.get(3)?,
-                        created_at: row.get(4)?,
+                        signature_hex: row.get(4)?,
+                        created_at: row.get(5)?,
                     })
                 },
             )
@@ -91,13 +108,15 @@ impl PendingUpdateRepository {
                 stored_path,
                 size_bytes,
                 sha256_hex,
+                signature_hex,
                 created_at
-            ) VALUES (1, ?1, ?2, ?3, ?4, ?5)",
+            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 &pending.filename,
                 &pending.stored_path,
                 pending.size_bytes,
                 &pending.sha256_hex,
+                &pending.signature_hex,
                 &pending.created_at,
             ],
         )

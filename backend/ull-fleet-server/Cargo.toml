@@ -15,10 +15,12 @@ axum = { version = "0.8", features = ["macros"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 sha2 = "0.10"
 thiserror = "2"
+ull-fleet-sign = { path = "../../tools/ull-fleet-sign" }
 tokio = { version = "1.48", features = ["fs", "macros", "net", "rt-multi-thread"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [dev-dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

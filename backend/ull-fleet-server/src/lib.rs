@@ -13,7 +13,7 @@ use infra::{PendingUpdateRepository, UpdateStorage};
 pub fn create_app(config: Config) -> anyhow::Result<Router> {
     let repository = PendingUpdateRepository::new(config.database_path.clone());
     let storage = UpdateStorage::new(config.uploads_dir.clone());
-    let ota_service = OtaService::new(repository, storage);
+    let ota_service = OtaService::new(repository, storage, config.ota_public_key);
 
     ota_service
         .initialize()

@@ -21,9 +21,9 @@ pub async fn index(State(ota_service): State<OtaService>) -> AppResult<Html<Stri
 #[axum::debug_handler]
 pub async fn upload_update(
     State(ota_service): State<OtaService>,
-    OtaUpload(bytes): OtaUpload,
+    OtaUpload(upload): OtaUpload,
 ) -> AppResult<(StatusCode, String)> {
-    let pending = ota_service.upload(bytes).await?;
+    let pending = ota_service.upload(upload).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -62,6 +62,13 @@ fn download_response(served_update: ServedUpdate) -> anyhow::Result<Response> {
         HeaderName::from_static("x-application-image-sha256"),
         sha256_header,
     );
+    if !served_update.pending.signature_hex.is_empty() {
+        headers.insert(
+            HeaderName::from_static(ull_fleet_sign::SIGNATURE_HEADER),
+            HeaderValue::from_str(&served_update.pending.signature_hex)
+                .context("failed to build signature header")?,
+        );
+    }
 
     Ok(response)
 }
@@ -79,20 +86,23 @@ fn index_html(pending: Option<&PendingUpdate>) -> String {
         r#"<!doctype html>
 <html>
 <head>
-  <meta charset=\"utf-8\">
+  <meta charset="utf-8">
   <title>ull-fleet-server</title>
 </head>
 <body>
   <h1>ull-fleet-server</h1>
   <p>Upload one OTA image. The ESP32 will poll <code>/api/update</code> every 10 seconds. When it downloads the image, the backend deletes it.</p>
   {pending_html}
-  <form id=\"upload-form\">
-    <input type=\"file\" id=\"ota-file\" required>
-    <button type=\"submit\">Upload OTA Image</button>
+  <form id="upload-form">
+    <input type="file" id="ota-file" required>
+    <input type="text" id="ota-signature" placeholder="signature (ull-fleet-sign sign key image)" size="70" required>
+    <button type="submit">Upload OTA Image</button>
   </form>
-  <p id=\"upload-status\"></p>
+  <p id="upload-status"></p>
   <p>API upload example:</p>
-  <pre>curl -H "Content-Type: application/octet-stream" --data-binary @ota.bin http://127.0.0.1:3000/api/upload</pre>
+  <pre>curl -H "Content-Type: application/octet-stream" \
+     -H "X-Application-Image-Ed25519: $(ull-fleet-sign sign ota-signing.key ota.bin)" \
+     --data-binary @ota.bin http://127.0.0.1:3000/api/upload</pre>
   <script>
     const form = document.getElementById('upload-form');
     const fileInput = document.getElementById('ota-file');
@@ -111,7 +121,10 @@ fn index_html(pending: Option<&PendingUpdate>) -> String {
 
       const response = await fetch('/api/upload', {{
         method: 'POST',
-        headers: {{ 'Content-Type': 'application/octet-stream' }},
+        headers: {{
+          'Content-Type': 'application/octet-stream',
+          'X-Application-Image-Ed25519': document.getElementById('ota-signature').value.trim(),
+        }},
         body: file,
       }});
 

@@ -22,6 +22,7 @@ impl From<UploadUpdateError> for AppError {
     fn from(err: UploadUpdateError) -> Self {
         match err {
             UploadUpdateError::EmptyFile => Self::Validation("uploaded file is empty".to_string()),
+            UploadUpdateError::BadSignature => Self::Validation(err.to_string()),
             UploadUpdateError::Unknown(inner) => Self::Internal(inner),
         }
     }
