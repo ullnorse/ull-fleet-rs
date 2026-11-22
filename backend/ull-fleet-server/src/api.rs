@@ -259,7 +259,7 @@ async fn stream_events(
         .db
         .call(move |conn| views::snapshot(conn, &inner, now()))
         .await?;
-    let first = serde_json::to_string(&StreamMessage::Snapshot(snapshot))
+    let first = serde_json::to_string(&StreamMessage::Snapshot(Box::new(snapshot)))
         .map_err(|err| AppError::Internal(err.into()))?;
     let updates = BroadcastStream::new(receiver)
         .take_while(|message| std::future::ready(message.is_ok()))

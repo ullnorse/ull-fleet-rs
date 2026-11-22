@@ -161,9 +161,11 @@ pub struct Snapshot {
 /// One message on `/api/v1/stream` (Server-Sent Events, JSON data).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+// Messages are serialized once and dropped; their size does not matter.
+#[allow(clippy::large_enum_variant)]
 pub enum StreamMessage {
     /// Sent first on every connection.
-    Snapshot(Snapshot),
+    Snapshot(Box<Snapshot>),
     /// A device changed: check-in, rename, online state, update state.
     Device(DeviceView),
     DeviceRemoved { id: String },

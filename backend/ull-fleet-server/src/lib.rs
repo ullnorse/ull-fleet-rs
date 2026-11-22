@@ -52,6 +52,8 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(api::router())
         .fallback(static_files::serve)
+        // Skips event streams and small bodies.
+        .layer(tower_http::compression::CompressionLayer::new())
         .layer(DefaultBodyLimit::max(MAX_IMAGE_SIZE + 64 * 1024))
         .with_state(state)
 }
