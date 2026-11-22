@@ -83,7 +83,7 @@ uses for labels and units.
   by other keys (`OTA_PUBLIC_KEY`).
 - The UI and the release/deploy API require a login when
   `FLEET_ADMIN_PASSWORD` is set. Sessions are random tokens stored in SQLite,
-  sent as an `HttpOnly; SameSite=Strict` cookie.
+  sent as an `HttpOnly; SameSite=Lax` cookie (Lax so links opened from other apps keep the session; cross-site form posts are still blocked).
 - Device endpoints are unauthenticated: anyone on the LAN can post readings for a
   device id. Acceptable for a home network; per-device keys are the next step.
 

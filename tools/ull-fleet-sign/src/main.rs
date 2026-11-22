@@ -5,6 +5,7 @@
 //! ull-fleet-sign pubkey <secret-key-file>          print the public key again
 //! ull-fleet-sign sign <secret-key-file> <image>    print the signature for an image
 //! ull-fleet-sign verify <public-key-hex> <image> <signature-hex>
+//! ull-fleet-sign inspect <image>                   print project, version and build info
 //! ```
 //!
 //! The secret key file holds the 32-byte Ed25519 seed as hex. Keep it off the
@@ -21,7 +22,8 @@ const USAGE: &str = "usage:
   ull-fleet-sign keygen <secret-key-file>
   ull-fleet-sign pubkey <secret-key-file>
   ull-fleet-sign sign <secret-key-file> <image>
-  ull-fleet-sign verify <public-key-hex> <image> <signature-hex>";
+  ull-fleet-sign verify <public-key-hex> <image> <signature-hex>
+  ull-fleet-sign inspect <image>";
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -50,6 +52,20 @@ fn main() -> anyhow::Result<()> {
                 &from_hex(signature_hex).context("signature")?,
             )?;
             println!("ok");
+            Ok(())
+        }
+        ["inspect", image_path] => {
+            let image = read_image(Path::new(image_path))?;
+            let desc = ull_fleet_sign::appdesc::AppDesc::parse(&image)?;
+            println!("project         {}", desc.project_name);
+            println!("version         {}", desc.version);
+            println!("secure_version  {}", desc.secure_version);
+            println!("built           {} {}", desc.date, desc.time);
+            println!("size            {} bytes", image.len());
+            println!(
+                "sha256          {}",
+                to_hex(&ull_fleet_sign::sha256(&image))
+            );
             Ok(())
         }
         _ => bail!("{USAGE}"),
