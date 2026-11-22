@@ -7,9 +7,11 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod fleet;
+pub mod live;
 pub mod releases;
-pub mod ui;
-pub mod units;
+pub mod static_files;
+pub mod views;
+pub use ull_fleet_types::units;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,6 +30,7 @@ pub const MAX_IMAGE_SIZE: usize = 8 * 1024 * 1024;
 pub struct AppState {
     pub db: Db,
     pub config: Arc<Config>,
+    pub live: Arc<live::Live>,
 }
 
 impl AppState {
@@ -40,18 +43,15 @@ impl AppState {
         Ok(Self {
             db,
             config: Arc::new(config),
+            live: Arc::default(),
         })
-    }
-
-    pub fn poll_interval_s(&self) -> u64 {
-        self.config.poll_interval.as_secs()
     }
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(api::router())
-        .merge(ui::router())
+        .fallback(static_files::serve)
         .layer(DefaultBodyLimit::max(MAX_IMAGE_SIZE + 64 * 1024))
         .with_state(state)
 }

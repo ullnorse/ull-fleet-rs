@@ -73,6 +73,27 @@ CREATE TABLE sessions (
     token_hash TEXT PRIMARY KEY,
     expires_at INTEGER NOT NULL
 );
+"#, r#"
+ALTER TABLE devices ADD COLUMN location TEXT NOT NULL DEFAULT '';
+ALTER TABLE devices ADD COLUMN poll_interval_s INTEGER NOT NULL DEFAULT 30;
+
+CREATE TABLE alert_rules (
+    device_id TEXT NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
+    metric TEXT NOT NULL,
+    min REAL,
+    max REAL,
+    PRIMARY KEY (device_id, metric)
+);
+
+CREATE TABLE active_alerts (
+    device_id TEXT NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
+    metric TEXT NOT NULL,
+    value REAL NOT NULL,
+    direction TEXT NOT NULL,
+    limit_value REAL NOT NULL,
+    since INTEGER NOT NULL,
+    PRIMARY KEY (device_id, metric)
+);
 "#];
 
 #[derive(Clone)]

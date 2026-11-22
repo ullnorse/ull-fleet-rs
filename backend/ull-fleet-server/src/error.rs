@@ -54,6 +54,12 @@ impl From<rusqlite::Error> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        (self.status(), self.public_message()).into_response()
+        (
+            self.status(),
+            axum::Json(ull_fleet_types::ApiError {
+                error: self.public_message(),
+            }),
+        )
+            .into_response()
     }
 }

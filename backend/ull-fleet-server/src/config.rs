@@ -17,6 +17,8 @@ pub struct Config {
     pub admin_password: Option<String>,
     /// How often devices are told to check in.
     pub poll_interval: Duration,
+    /// Check-in interval for devices whose page is open in the UI.
+    pub live_poll_interval: Duration,
     pub metrics_retention_days: u32,
 }
 
@@ -42,6 +44,13 @@ impl Config {
                     .context("failed to parse POLL_INTERVAL_S")?
                     .unwrap_or(30),
             ),
+            live_poll_interval: Duration::from_secs(
+                var("LIVE_POLL_INTERVAL_S")
+                    .map(|value| value.parse())
+                    .transpose()
+                    .context("failed to parse LIVE_POLL_INTERVAL_S")?
+                    .unwrap_or(5),
+            ),
             metrics_retention_days: var("METRICS_RETENTION_DAYS")
                 .map(|value| value.parse())
                 .transpose()
@@ -58,6 +67,7 @@ impl Config {
             ota_public_key: None,
             admin_password: None,
             poll_interval: Duration::from_secs(30),
+            live_poll_interval: Duration::from_secs(5),
             metrics_retention_days: 30,
         }
     }

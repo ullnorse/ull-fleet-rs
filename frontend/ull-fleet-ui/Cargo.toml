@@ -1,0 +1,32 @@
+[package]
+name = "ull-fleet-ui"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Web UI for the ull-fleet server (Leptos, client-side)"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+leptos = { version = "0.8.23", features = ["csr"] }
+leptos_router = "0.8.17"
+ull-fleet-types = { path = "../../common/ull-fleet-types" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = [
+    "Document", "Element", "HtmlElement", "HtmlInputElement", "HtmlSelectElement", "Window",
+    "EventSource", "MessageEvent", "Event", "PointerEvent", "MouseEvent", "KeyboardEvent",
+    "DomRect", "Headers", "Request", "RequestInit", "RequestCredentials", "Response",
+    "File", "FileList", "Blob", "DragEvent", "DataTransfer", "Location", "History",
+    "VisibilityState", "Storage", "Navigator", "MediaQueryList", "SvgElement",
+    "Url", "UrlSearchParams", "HtmlAnchorElement", "Performance",
+] }

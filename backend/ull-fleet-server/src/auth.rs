@@ -1,9 +1,9 @@
 //! Admin login: a password from the environment, sessions in SQLite.
 
-use axum::extract::{FromRequestParts, OriginalUri};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, header};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 use rusqlite::{OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
@@ -13,60 +13,49 @@ use crate::error::{AppError, AppResult};
 pub const COOKIE_NAME: &str = "ull_fleet_session";
 pub const SESSION_DAYS: i64 = 30;
 
-/// Proof that the request may change the fleet. Pages redirect to the login
-/// form when it is missing; API calls get 401.
+/// Proof that the request may use the admin API; 401 otherwise.
 pub struct Admin;
 
 impl FromRequestParts<AppState> for Admin {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Response> {
-        let Some(password) = state.config.admin_password.clone() else {
-            return Ok(Admin);
-        };
-        if let Some(token) = bearer(&parts.headers)
-            && constant_time_eq(&digest(token), &digest(&password))
-        {
-            return Ok(Admin);
-        }
-        if let Some(token) = session_cookie(&parts.headers) {
-            let hash = token_hash(&token);
-            let valid = state
-                .db
-                .call(move |conn| {
-                    Ok(conn
-                        .query_row(
-                            "SELECT 1 FROM sessions WHERE token_hash = ?1 AND expires_at > ?2",
-                            params![hash, crate::db::now()],
-                            |_| Ok(()),
-                        )
-                        .optional()?
-                        .is_some())
-                })
-                .await
-                .map_err(IntoResponse::into_response)?;
-            if valid {
-                return Ok(Admin);
-            }
-        }
-
-        let path = parts
-            .extensions
-            .get::<OriginalUri>()
-            .map_or_else(|| parts.uri.clone(), |uri| uri.0.clone());
-        if path.path().starts_with("/api/") {
-            Err(AppError::Unauthorized.into_response())
-        } else {
-            let next = if parts.method == axum::http::Method::GET {
-                path.path_and_query()
-                    .map_or("/", |pq| pq.as_str())
-                    .to_string()
-            } else {
-                "/".to_string()
-            };
-            Err(Redirect::to(&format!("/login?next={}", crate::ui::encode(&next))).into_response())
+        match is_admin(state, &parts.headers).await {
+            Ok(true) => Ok(Admin),
+            Ok(false) => Err(AppError::Unauthorized.into_response()),
+            Err(err) => Err(err.into_response()),
         }
     }
+}
+
+/// No password is configured, or the request has the password as a bearer
+/// token or a valid session cookie.
+pub async fn is_admin(state: &AppState, headers: &HeaderMap) -> AppResult<bool> {
+    let Some(password) = state.config.admin_password.clone() else {
+        return Ok(true);
+    };
+    if let Some(token) = bearer(headers)
+        && constant_time_eq(&digest(token), &digest(&password))
+    {
+        return Ok(true);
+    }
+    let Some(token) = session_cookie(headers) else {
+        return Ok(false);
+    };
+    let hash = token_hash(&token);
+    state
+        .db
+        .call(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT 1 FROM sessions WHERE token_hash = ?1 AND expires_at > ?2",
+                    params![hash, crate::db::now()],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some())
+        })
+        .await
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {

@@ -104,11 +104,40 @@ impl TestApp {
         .await
     }
 
-    async fn page(&self, path: &str) -> (StatusCode, String) {
+    async fn get(&self, path: &str) -> Value {
         let (status, _, body) = self
             .send(Request::get(path).body(Body::empty()).unwrap())
             .await;
-        (status, String::from_utf8(body).unwrap())
+        assert_eq!(status, StatusCode::OK, "{path}: {}", String::from_utf8_lossy(&body));
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    async fn json(&self, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
+        let (status, _, body) = self
+            .send(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await;
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    async fn device(&self) -> Value {
+        self.get(&format!("/api/v1/devices/{DEVICE}")).await
+    }
+
+    async fn event_messages(&self) -> Vec<String> {
+        self.get(&format!("/api/v1/events?device={DEVICE}"))
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["message"].as_str().unwrap().to_string())
+            .collect()
     }
 }
 
@@ -134,16 +163,27 @@ async fn checkin_registers_device_and_metrics() {
         .await;
     assert_eq!(reply, json!({ "update": false, "poll_interval_s": 30 }));
 
-    let (status, html) = app.page("/").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("22.5"), "{html}");
-    assert!(html.contains("1 of 1 online"));
+    let snapshot = app.get("/api/v1/snapshot").await;
+    let device = &snapshot["devices"][0];
+    assert_eq!(device["id"], DEVICE);
+    assert_eq!(device["online"], true);
+    assert_eq!(device["readings"][0]["name"], "temperature_c");
+    assert_eq!(device["readings"][0]["value"], 22.5);
+    assert!(
+        snapshot["events"][0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("First check-in")
+    );
 
-    let (status, html) = app.page(&format!("/devices/{DEVICE}")).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("Temperature"));
-    assert!(html.contains("<svg"));
-    assert!(html.contains("First check-in"));
+    let series = app
+        .get(&format!("/api/v1/devices/{DEVICE}/series?metric=humidity_pct&range=1h"))
+        .await;
+    assert_eq!(series["points"][0]["avg"], 48.0);
+    assert_eq!(series["bucket_s"], 20);
+
+    let lines = app.get("/api/v1/sparklines").await;
+    assert_eq!(lines.as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -243,9 +283,11 @@ async fn update_flow_keeps_image_and_tracks_success() {
     let (status, _, _) = app.firmware().await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, html) = app.page(&format!("/devices/{DEVICE}")).await;
-    assert!(html.contains("Updated to 0.2.0-200"), "{html}");
-    assert!(html.contains("Up to date"));
+    assert!(app.event_messages().await.contains(&"Updated to 0.2.0-200".to_string()));
+    let device = app.device().await;
+    assert_eq!(device["update"]["state"], "none");
+    assert_eq!(device["version"], "0.2.0-200");
+    assert_eq!(app.get("/api/v1/releases").await[0]["running"], 1);
 }
 
 #[tokio::test]
@@ -273,8 +315,9 @@ async fn failed_updates_stop_after_three_attempts() {
     let (status, _, _) = app.firmware().await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (_, html) = app.page(&format!("/devices/{DEVICE}")).await;
-    assert!(html.contains("Failed 3 times"), "{html}");
+    let device = app.device().await;
+    assert_eq!(device["update"]["state"], "failed");
+    assert_eq!(device["update"]["attempts"], 3);
 }
 
 #[tokio::test]
@@ -304,55 +347,51 @@ async fn deploy_refuses_older_or_foreign_releases() {
 }
 
 #[tokio::test]
-async fn login_protects_ui_and_admin_api() {
+async fn login_protects_admin_api() {
     let app = TestApp::new(|config| config.admin_password = Some("hunter2".into()));
     app.checkin("0.1.0-100", 5, json!({})).await; // devices need no login
 
-    let (status, headers, _) = app
-        .send(Request::get("/").body(Body::empty()).unwrap())
+    // The app shell itself is public; its data is not.
+    let (status, _, _) = app
+        .send(Request::get("/devices/x").body(Body::empty()).unwrap())
         .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/login?next=/");
+    assert_ne!(status, StatusCode::UNAUTHORIZED);
+    let (status, _, _) = app
+        .send(Request::get("/api/v1/snapshot").body(Body::empty()).unwrap())
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        app.get("/api/v1/session").await,
+        json!({ "auth_required": true, "signed_in": false })
+    );
 
     let (image, signature) = release("0.2.0-200");
     let (status, _) = app.upload(&image, &signature).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    let (status, headers, _) = app
-        .send(
-            Request::post("/login")
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .body(Body::from("password=wrong&next=%2F"))
-                .unwrap(),
-        )
-        .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert!(headers.get(header::SET_COOKIE).is_none());
+    let (status, _) = app.json("POST", "/api/v1/login", json!({ "password": "wrong" })).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     let (status, headers, _) = app
         .send(
-            Request::post("/login")
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "password=hunter2&next=https%3A%2F%2Fevil.example",
-                ))
+            Request::post("/api/v1/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({ "password": "hunter2" }).to_string()))
                 .unwrap(),
         )
         .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/", "external redirect refused");
+    assert_eq!(status, StatusCode::NO_CONTENT);
     let cookie = headers[header::SET_COOKIE].to_str().unwrap();
     assert!(cookie.contains("HttpOnly"));
     let session = cookie.split(';').next().unwrap().to_string();
 
-    let (status, _, body) = app
-        .send(
-            Request::get("/")
-                .header(header::COOKIE, &session)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
+    let with_cookie = |path: &str| {
+        Request::get(path)
+            .header(header::COOKIE, &session)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (status, _, body) = app.send(with_cookie("/api/v1/snapshot")).await;
     assert_eq!(status, StatusCode::OK);
     assert!(String::from_utf8_lossy(&body).contains(DEVICE));
 
@@ -367,96 +406,138 @@ async fn login_protects_ui_and_admin_api() {
     assert_eq!(status, StatusCode::OK);
 
     app.send(
-        Request::post("/logout")
+        Request::post("/api/v1/logout")
             .header(header::COOKIE, &session)
             .body(Body::empty())
             .unwrap(),
     )
     .await;
+    let (status, _, _) = app.send(with_cookie("/api/v1/snapshot")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "session ended");
+}
+
+#[tokio::test]
+async fn rename_location_and_alerts() {
+    let app = TestApp::new(|_| {});
+    app.checkin("0.1.0-100", 5, json!({ "humidity_pct": 50.0 })).await;
+
+    let (status, device) = app
+        .json(
+            "PATCH",
+            &format!("/api/v1/devices/{DEVICE}"),
+            json!({ "name": " Living room ", "location": "Upstairs" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(device["name"], "Living room");
+    assert_eq!(device["location"], "Upstairs");
+
+    let (status, _) = app
+        .json(
+            "PATCH",
+            &format!("/api/v1/devices/{DEVICE}"),
+            json!({ "alert_rules": [{ "metric": "humidity_pct", "min": 60.0, "max": 40.0 }] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "min above max");
+
+    // A rule the latest reading already breaks fires at once.
+    let (status, device) = app
+        .json(
+            "PATCH",
+            &format!("/api/v1/devices/{DEVICE}"),
+            json!({ "alert_rules": [{ "metric": "humidity_pct", "min": null, "max": 45.0 }] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(device["alerts"][0]["direction"], "above");
+    assert!(app.event_messages().await[0].starts_with("Humidity above 45 %"));
+
+    // Still high: no second alert event.
+    app.checkin("0.1.0-100", 35, json!({ "humidity_pct": 52.0 })).await;
+    assert_eq!(app.device().await["alerts"][0]["value"], 52.0);
+    let alerts = app
+        .event_messages()
+        .await
+        .iter()
+        .filter(|message| message.contains("above"))
+        .count();
+    assert_eq!(alerts, 1);
+
+    app.checkin("0.1.0-100", 65, json!({ "humidity_pct": 41.0 })).await;
+    assert_eq!(app.device().await["alerts"], json!([]));
+    assert_eq!(app.event_messages().await[0], "Humidity back in range: 41 %");
+
     let (status, _, _) = app
         .send(
-            Request::get("/")
-                .header(header::COOKIE, &session)
+            Request::delete(format!("/api/v1/devices/{DEVICE}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "session ended");
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(app.get("/api/v1/devices").await, json!([]));
 }
 
 #[tokio::test]
-async fn ui_upload_form_and_rename() {
+async fn stream_starts_with_snapshot_and_watching_speeds_up_checkins() {
     let app = TestApp::new(|_| {});
-    app.checkin("0.1.0-100", 5, json!({ "temperature_c": 21.0 }))
-        .await;
-    let (image, signature) = release("0.2.0-200");
+    app.checkin("0.1.0-100", 5, json!({})).await;
 
-    let boundary = "XBOUNDARYX";
-    let mut body = Vec::new();
-    body.extend_from_slice(
-        format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"fw.bin\"\r\n\
-             Content-Type: application/octet-stream\r\n\r\n"
-        )
-        .as_bytes(),
-    );
-    body.extend_from_slice(&image);
-    body.extend_from_slice(
-        format!(
-            "\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"signature\"\r\n\r\n{signature}\r\n\
-             --{boundary}--\r\n"
-        )
-        .as_bytes(),
-    );
-    let (status, headers, _) = app
-        .send(
-            Request::post("/releases")
-                .header(
-                    header::CONTENT_TYPE,
-                    format!("multipart/form-data; boundary={boundary}"),
-                )
-                .body(Body::from(body))
+    let response = app
+        .app
+        .clone()
+        .oneshot(Request::get("/api/v1/stream").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    let frame = body.frame().await.unwrap().unwrap().into_data().unwrap();
+    let text = String::from_utf8_lossy(&frame);
+    assert!(text.starts_with("data: {\"type\":\"snapshot\""), "{text}");
+
+    let watch = app
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/devices/{DEVICE}/watch"))
+                .body(Body::empty())
                 .unwrap(),
         )
-        .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers[header::LOCATION].to_str().unwrap();
-    assert!(
-        location.starts_with("/releases?notice=Uploaded"),
-        "{location}"
-    );
+        .await
+        .unwrap();
+    assert_eq!(watch.status(), StatusCode::OK);
+    let reply = app.checkin("0.1.0-100", 10, json!({})).await;
+    assert_eq!(reply["poll_interval_s"], 5);
+    assert_eq!(app.device().await["live"], true);
 
-    let (_, html) = app.page("/releases").await;
-    assert!(html.contains("0.2.0-200"));
-    assert!(html.contains("0 of 1 running"));
-
-    let (status, _, _) = app
-        .send(
-            Request::post(format!("/devices/{DEVICE}/rename"))
-                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-                .body(Body::from("name=Living+room"))
-                .unwrap(),
-        )
-        .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (_, html) = app.page("/").await;
-    assert!(html.contains("Living room"));
-}
-
-#[tokio::test]
-async fn assets_are_served() {
-    let app = TestApp::new(|_| {});
-    for path in ["/assets/style.css", "/assets/app.js"] {
-        let (status, headers, body) = app
-            .send(Request::get(path).body(Body::empty()).unwrap())
-            .await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(!body.is_empty());
-        assert!(
-            headers[header::CONTENT_TYPE]
-                .to_str()
-                .unwrap()
-                .starts_with("text/")
-        );
+    // The stream reports the check-in.
+    let mut seen_device = false;
+    for _ in 0..5 {
+        let frame = body.frame().await.unwrap().unwrap().into_data().unwrap();
+        if String::from_utf8_lossy(&frame).contains("\"type\":\"device\"") {
+            seen_device = true;
+            break;
+        }
     }
+    assert!(seen_device);
+
+    drop(watch);
+    tokio::task::yield_now().await;
+    let reply = app.checkin("0.1.0-100", 15, json!({})).await;
+    assert_eq!(reply["poll_interval_s"], 30);
+}
+
+#[tokio::test]
+async fn ui_shell_is_served_for_client_routes() {
+    let app = TestApp::new(|_| {});
+    let (status, _, _) = app
+        .send(Request::get("/api/v1/nope").body(Body::empty()).unwrap())
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // index.html, or the "not built" hint when frontend/dist is empty.
+    let (status, _, _) = app
+        .send(Request::get("/devices/a1b2c3d4e5f6").body(Body::empty()).unwrap())
+        .await;
+    assert!(status == StatusCode::OK || status == StatusCode::SERVICE_UNAVAILABLE);
 }

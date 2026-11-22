@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use ull_fleet_server::config::Config;
-use ull_fleet_server::{AppState, router, spawn_maintenance};
+use ull_fleet_server::{AppState, live, router, spawn_maintenance};
 
 const USAGE: &str = "usage: ull-fleet-server [--env-file <path>]
 
@@ -51,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
     info!(data_dir = %config.data_dir.display(), "starting");
     let state = AppState::new(config)?;
     spawn_maintenance(state.clone());
+    live::spawn_offline_monitor(state.clone());
 
     let listener = TcpListener::bind(listen_addr)
         .await

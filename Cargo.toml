@@ -1,6 +1,17 @@
 [workspace]
 resolver = "2"
-members = ["backend/ull-fleet-server", "tools/ull-fleet-sign"]
+members = [
+    "backend/ull-fleet-server",
+    "common/ull-fleet-types",
+    "frontend/ull-fleet-ui",
+    "tools/ull-fleet-sign",
+]
+# The UI only builds for wasm32 (scripts/build-ui.sh).
+default-members = [
+    "backend/ull-fleet-server",
+    "common/ull-fleet-types",
+    "tools/ull-fleet-sign",
+]
 
 [workspace.package]
 edition = "2024"
@@ -10,3 +21,10 @@ rust-version = "1.88"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

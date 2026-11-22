@@ -93,7 +93,7 @@ pub fn symbol(name: &str) -> &'static str {
 
 /// The value without its unit, at the precision that fits the unit.
 pub fn number(name: &str, value: f64) -> String {
-    let decimals = unit(name).map_or(1, |unit| unit.decimals);
+    let decimals = decimals(name);
     let text = format!("{value:.decimals$}");
     // Avoid "-0" and "-0.0".
     if text
@@ -113,6 +113,32 @@ pub fn format(name: &str, value: f64) -> String {
         "" => number(name, value),
         symbol => format!("{} {symbol}", number(name, value)),
     }
+}
+
+/// Colour family of a metric: "temperature", "humidity", "pressure", "air",
+/// "light", "power", "signal" or "other".
+pub fn kind(name: &str) -> &'static str {
+    match base(name) {
+        "temperature" => return "temperature",
+        "humidity" | "soil_moisture" => return "humidity",
+        "pressure" => return "pressure",
+        "co2" | "voc" | "pm25" | "pm10" => return "air",
+        _ => {}
+    }
+    match unit(name).map(|unit| unit.suffix) {
+        Some("_c") => "temperature",
+        Some("_pct") => "humidity",
+        Some("_hpa") => "pressure",
+        Some("_ppm") => "air",
+        Some("_lux") => "light",
+        Some("_v" | "_a" | "_w" | "_mv") => "power",
+        Some("_dbm") => "signal",
+        _ => "other",
+    }
+}
+
+pub fn decimals(name: &str) -> usize {
+    unit(name).map_or(1, |unit| unit.decimals)
 }
 
 pub fn sort_metrics<T>(metrics: &mut [(String, T)]) {

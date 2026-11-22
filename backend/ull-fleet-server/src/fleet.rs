@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use ull_fleet_types::{ActiveAlert, AlertRule, EventView, Point, Range, Series, Sparkline};
 
 pub const MAX_METRICS_PER_CHECKIN: usize = 16;
 /// Failed attempts after which a release is no longer offered to a device.
@@ -38,6 +39,9 @@ pub struct Checkin {
 pub struct CheckinReply {
     pub update: bool,
     pub poll_interval_s: u64,
+    /// Firmware or update state changed, so release coverage did too.
+    #[serde(skip)]
+    pub releases_changed: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -142,6 +146,7 @@ impl Checkin {
 
 struct Previous {
     version: String,
+    poll_interval_s: u64,
     uptime_s: i64,
     last_seen: i64,
     target_release_id: Option<i64>,
@@ -160,7 +165,8 @@ pub fn checkin(
     let tx = conn.transaction()?;
     let previous = tx
         .query_row(
-            "SELECT version, uptime_s, last_seen, target_release_id, update_state, update_attempts
+            "SELECT version, uptime_s, last_seen, target_release_id, update_state, update_attempts,
+                    poll_interval_s
              FROM devices WHERE id = ?1",
             [device_id],
             |row| {
@@ -171,12 +177,13 @@ pub fn checkin(
                     target_release_id: row.get(3)?,
                     update_state: UpdateState::parse(&row.get::<_, String>(4)?),
                     update_attempts: row.get(5)?,
+                    poll_interval_s: row.get(6)?,
                 })
             },
         )
         .optional()?;
 
-    let mut events: Vec<(&str, String)> = Vec::new();
+    let mut events: Vec<(&'static str, String)> = Vec::new();
     let uptime = checkin.uptime_s.min(i64::MAX as u64) as i64;
     match &previous {
         None => events.push((
@@ -185,7 +192,7 @@ pub fn checkin(
         )),
         Some(previous) => {
             let gap = now - previous.last_seen;
-            if gap > offline_after_s(poll_interval_s) {
+            if gap > offline_after_s(previous.poll_interval_s) {
                 events.push(("online", format!("Back online after {}", duration(gap))));
             }
             if uptime < previous.uptime_s {
@@ -246,15 +253,16 @@ pub fn checkin(
     tx.execute(
         "INSERT INTO devices (id, project, version, secure_version, partition, ota_state, ip,
                               rssi_dbm, uptime_s, last_ota_error, first_seen, last_seen,
-                              update_state, update_attempts)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)
+                              update_state, update_attempts, poll_interval_s)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13, ?14)
          ON CONFLICT (id) DO UPDATE SET
              project = excluded.project, version = excluded.version,
              secure_version = excluded.secure_version, partition = excluded.partition,
              ota_state = excluded.ota_state, ip = excluded.ip, rssi_dbm = excluded.rssi_dbm,
              uptime_s = excluded.uptime_s, last_ota_error = excluded.last_ota_error,
              last_seen = excluded.last_seen, update_state = excluded.update_state,
-             update_attempts = excluded.update_attempts",
+             update_attempts = excluded.update_attempts,
+             poll_interval_s = excluded.poll_interval_s",
         params![
             device_id,
             checkin.project,
@@ -269,9 +277,11 @@ pub fn checkin(
             now,
             state.as_str(),
             attempts,
+            poll_interval_s,
         ],
     )?;
 
+    events.extend(evaluate_alerts(&tx, device_id, &checkin.metrics, now)?);
     for (kind, message) in events {
         add_event(&tx, device_id, now, kind, &message)?;
     }
@@ -288,9 +298,13 @@ pub fn checkin(
     }
     tx.commit()?;
 
+    let releases_changed = previous.as_ref().is_none_or(|previous| {
+        previous.version != checkin.version || previous.update_state != state
+    });
     Ok(CheckinReply {
         update: state == UpdateState::Pending,
         poll_interval_s,
+        releases_changed,
     })
 }
 
@@ -366,6 +380,8 @@ pub fn duration(seconds: i64) -> String {
 pub struct Device {
     pub id: String,
     pub name: String,
+    pub location: String,
+    pub poll_interval_s: u64,
     pub project: String,
     pub version: String,
     pub secure_version: i64,
@@ -381,8 +397,8 @@ pub struct Device {
     pub target_version: Option<String>,
     pub update_state: UpdateState,
     pub update_attempts: i64,
-    /// Latest value of each metric, by name.
-    pub latest: Vec<(String, f64)>,
+    /// Latest value and time of each metric, by name.
+    pub latest: Vec<(String, (f64, i64))>,
 }
 
 impl Device {
@@ -394,14 +410,15 @@ impl Device {
         }
     }
 
-    pub fn is_online(&self, now: i64, poll_interval_s: u64) -> bool {
-        now - self.last_seen <= offline_after_s(poll_interval_s)
+    pub fn is_online(&self, now: i64) -> bool {
+        now - self.last_seen <= offline_after_s(self.poll_interval_s)
     }
 }
 
 const DEVICE_COLUMNS: &str = "d.id, d.name, d.project, d.version, d.secure_version, d.partition,
     d.ota_state, d.ip, d.rssi_dbm, d.uptime_s, d.last_ota_error, d.first_seen, d.last_seen,
-    d.target_release_id, r.version, d.update_state, d.update_attempts";
+    d.target_release_id, r.version, d.update_state, d.update_attempts, d.location,
+    d.poll_interval_s";
 
 fn device_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Device> {
     Ok(Device {
@@ -422,17 +439,21 @@ fn device_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Device> {
         target_version: row.get(14)?,
         update_state: UpdateState::parse(&row.get::<_, String>(15)?),
         update_attempts: row.get(16)?,
+        location: row.get(17)?,
+        poll_interval_s: row.get(18)?,
         latest: Vec::new(),
     })
 }
 
 fn attach_latest(conn: &Connection, devices: &mut [Device]) -> AppResult<()> {
     let mut stmt = conn.prepare_cached(
-        "SELECT name, value FROM latest_metrics WHERE device_id = ?1 ORDER BY name",
+        "SELECT name, value, ts FROM latest_metrics WHERE device_id = ?1 ORDER BY name",
     )?;
     for device in devices {
         device.latest = stmt
-            .query_map([&device.id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map([&device.id], |row| {
+                Ok((row.get(0)?, (row.get(1)?, row.get(2)?)))
+            })?
             .collect::<Result<_, _>>()?;
         crate::units::sort_metrics(&mut device.latest);
     }
@@ -469,11 +490,19 @@ pub fn get_device(conn: &Connection, id: &str) -> AppResult<Device> {
 }
 
 pub fn rename_device(conn: &Connection, id: &str, name: &str) -> AppResult<()> {
-    let name = name.trim();
-    validate_text("name", name, 40)?;
+    set_text_field(conn, id, "name", name)
+}
+
+pub fn set_location(conn: &Connection, id: &str, location: &str) -> AppResult<()> {
+    set_text_field(conn, id, "location", location)
+}
+
+fn set_text_field(conn: &Connection, id: &str, column: &'static str, value: &str) -> AppResult<()> {
+    let value = value.trim();
+    validate_text(column, value, 40)?;
     let changed = conn.execute(
-        "UPDATE devices SET name = ?2 WHERE id = ?1",
-        params![id, name],
+        &format!("UPDATE devices SET {column} = ?2 WHERE id = ?1"),
+        params![id, value],
     )?;
     if changed == 0 {
         return Err(AppError::NotFound);
@@ -489,48 +518,304 @@ pub fn remove_device(conn: &Connection, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-pub struct Event {
-    pub ts: i64,
-    pub kind: String,
-    pub message: String,
+fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventView> {
+    Ok(EventView {
+        id: row.get(0)?,
+        device_id: row.get(1)?,
+        ts: row.get(2)?,
+        kind: row.get(3)?,
+        message: row.get(4)?,
+    })
 }
 
-pub fn events(conn: &Connection, device_id: &str, limit: u32) -> AppResult<Vec<Event>> {
-    let mut stmt = conn.prepare(
-        "SELECT ts, kind, message FROM events WHERE device_id = ?1 ORDER BY ts DESC, id DESC LIMIT ?2",
+/// Events newest first, optionally of one device and older than `before_id`.
+pub fn events(
+    conn: &Connection,
+    device_id: Option<&str>,
+    before_id: Option<i64>,
+    limit: u32,
+) -> AppResult<Vec<EventView>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, device_id, ts, kind, message FROM events
+         WHERE (?1 IS NULL OR device_id = ?1) AND (?2 IS NULL OR id < ?2)
+         ORDER BY id DESC LIMIT ?3",
     )?;
     let events = stmt
-        .query_map(params![device_id, limit], |row| {
-            Ok(Event {
-                ts: row.get(0)?,
-                kind: row.get(1)?,
-                message: row.get(2)?,
-            })
-        })?
+        .query_map(params![device_id, before_id, limit], event_from_row)?
         .collect::<Result<_, _>>()?;
     Ok(events)
 }
 
-/// Bucketed averages of one metric: `(bucket start, average)`, oldest first.
+/// Events with an id above `after_id`, oldest first.
+pub fn events_after(conn: &Connection, after_id: i64) -> AppResult<Vec<EventView>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, device_id, ts, kind, message FROM events WHERE id > ?1 ORDER BY id LIMIT 500",
+    )?;
+    let events = stmt
+        .query_map([after_id], event_from_row)?
+        .collect::<Result<_, _>>()?;
+    Ok(events)
+}
+
+pub fn last_event_id(conn: &Connection) -> AppResult<i64> {
+    Ok(conn.query_row("SELECT COALESCE(MAX(id), 0) FROM events", [], |row| {
+        row.get(0)
+    })?)
+}
+
+/// One metric in buckets of `range.bucket_s()`, oldest first.
 pub fn series(
     conn: &Connection,
     device_id: &str,
-    name: &str,
-    since: i64,
-    bucket_s: i64,
-) -> AppResult<Vec<(i64, f64)>> {
+    metric: &str,
+    range: Range,
+    now: i64,
+) -> AppResult<Series> {
+    let bucket_s = range.bucket_s();
+    let from = now - range.seconds();
     let mut stmt = conn.prepare_cached(
-        "SELECT (ts / ?4) * ?4 AS bucket, AVG(value) FROM metrics
+        "SELECT (ts / ?4) * ?4 AS bucket, AVG(value), MIN(value), MAX(value) FROM metrics
          WHERE device_id = ?1 AND name = ?2 AND ts >= ?3
          GROUP BY bucket ORDER BY bucket",
     )?;
     let points = stmt
-        .query_map(params![device_id, name, since, bucket_s], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+        .query_map(params![device_id, metric, from, bucket_s], |row| {
+            Ok(Point {
+                t: row.get(0)?,
+                avg: row.get(1)?,
+                min: row.get(2)?,
+                max: row.get(3)?,
+            })
         })?
         .collect::<Result<_, _>>()?;
-    Ok(points)
+    Ok(Series {
+        metric: metric.to_string(),
+        range,
+        bucket_s,
+        from,
+        to: now,
+        points,
+    })
+}
+
+pub const SPARKLINE_BUCKET_S: i64 = 1800;
+
+/// 24 h of every metric of every device in 30-minute buckets.
+pub fn sparklines(conn: &Connection, now: i64) -> AppResult<Vec<Sparkline>> {
+    let mut stmt = conn.prepare(
+        "SELECT device_id, name, (ts / ?2) * ?2 AS bucket, AVG(value) FROM metrics
+         WHERE ts >= ?1 GROUP BY device_id, name, bucket ORDER BY device_id, name, bucket",
+    )?;
+    let mut rows = stmt.query(params![now - 86_400, SPARKLINE_BUCKET_S])?;
+    let mut lines: Vec<Sparkline> = Vec::new();
+    while let Some(row) = rows.next()? {
+        let device_id: String = row.get(0)?;
+        let metric: String = row.get(1)?;
+        let point: (i64, f64) = (row.get(2)?, row.get(3)?);
+        match lines.last_mut() {
+            Some(line) if line.device_id == device_id && line.metric == metric => {
+                line.min = line.min.min(point.1);
+                line.max = line.max.max(point.1);
+                line.points.push(point);
+            }
+            _ => lines.push(Sparkline {
+                device_id,
+                metric,
+                bucket_s: SPARKLINE_BUCKET_S,
+                min: point.1,
+                max: point.1,
+                points: vec![point],
+            }),
+        }
+    }
+    Ok(lines)
+}
+
+/// Raw readings of a device since `from`, oldest first: `(ts, metric, value)`.
+pub fn raw_metrics(
+    conn: &Connection,
+    device_id: &str,
+    from: i64,
+) -> AppResult<Vec<(i64, String, f64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT ts, name, value FROM metrics WHERE device_id = ?1 AND ts >= ?2 ORDER BY ts, name",
+    )?;
+    let rows = stmt
+        .query_map(params![device_id, from], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
+// Alerts.
+
+pub fn alert_rules(conn: &Connection, device_id: &str) -> AppResult<Vec<AlertRule>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT metric, min, max FROM alert_rules WHERE device_id = ?1 ORDER BY metric",
+    )?;
+    let rules = stmt
+        .query_map([device_id], |row| {
+            Ok(AlertRule {
+                metric: row.get(0)?,
+                min: row.get(1)?,
+                max: row.get(2)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(rules)
+}
+
+pub fn active_alerts(conn: &Connection, device_id: &str) -> AppResult<Vec<ActiveAlert>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT metric, value, direction, limit_value, since FROM active_alerts
+         WHERE device_id = ?1 ORDER BY metric",
+    )?;
+    let alerts = stmt
+        .query_map([device_id], |row| {
+            Ok(ActiveAlert {
+                metric: row.get(0)?,
+                value: row.get(1)?,
+                direction: row.get(2)?,
+                limit: row.get(3)?,
+                since: row.get(4)?,
+            })
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(alerts)
+}
+
+/// Replaces a device's alert rules and re-checks them against its latest
+/// readings. Returns the alert events this caused.
+pub fn set_alert_rules(
+    conn: &mut Connection,
+    device_id: &str,
+    rules: &[AlertRule],
+    now: i64,
+) -> AppResult<()> {
+    if rules.len() > MAX_METRICS_PER_CHECKIN {
+        return Err(AppError::bad_request("too many alert rules"));
+    }
+    for rule in rules {
+        validate_metric_name(&rule.metric)?;
+        if rule.min.is_none() && rule.max.is_none() {
+            return Err(AppError::bad_request(format!(
+                "the {} alert needs a lower or an upper limit",
+                crate::units::label(&rule.metric)
+            )));
+        }
+        if [rule.min, rule.max].into_iter().flatten().any(|v| !v.is_finite()) {
+            return Err(AppError::bad_request("alert limits must be numbers"));
+        }
+        if let (Some(min), Some(max)) = (rule.min, rule.max)
+            && min > max
+        {
+            return Err(AppError::bad_request(format!(
+                "the {} alert's lower limit is above its upper limit",
+                crate::units::label(&rule.metric)
+            )));
+        }
+    }
+    let tx = conn.transaction()?;
+    let exists: bool = tx
+        .query_row("SELECT 1 FROM devices WHERE id = ?1", [device_id], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(AppError::NotFound);
+    }
+    tx.execute("DELETE FROM alert_rules WHERE device_id = ?1", [device_id])?;
+    for rule in rules {
+        tx.execute(
+            "INSERT INTO alert_rules (device_id, metric, min, max) VALUES (?1, ?2, ?3, ?4)",
+            params![device_id, rule.metric, rule.min, rule.max],
+        )?;
+    }
+    let latest: BTreeMap<String, f64> = {
+        let mut stmt =
+            tx.prepare("SELECT name, value FROM latest_metrics WHERE device_id = ?1")?;
+        stmt.query_map([device_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    // Alerts of metrics that no longer have a rule end quietly.
+    tx.execute(
+        "DELETE FROM active_alerts WHERE device_id = ?1
+         AND metric NOT IN (SELECT metric FROM alert_rules WHERE device_id = ?1)",
+        [device_id],
+    )?;
+    for (kind, message) in evaluate_alerts(&tx, device_id, &latest, now)? {
+        add_event(&tx, device_id, now, kind, &message)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Compares readings with the device's rules, updates `active_alerts`, and
+/// returns events for alerts that started or ended.
+fn evaluate_alerts(
+    conn: &Connection,
+    device_id: &str,
+    readings: &BTreeMap<String, f64>,
+    now: i64,
+) -> AppResult<Vec<(&'static str, String)>> {
+    let mut events = Vec::new();
+    for rule in alert_rules(conn, device_id)? {
+        let Some(&value) = readings.get(&rule.metric) else {
+            continue;
+        };
+        let breach = match (rule.min, rule.max) {
+            (Some(min), _) if value < min => Some(("below", min)),
+            (_, Some(max)) if value > max => Some(("above", max)),
+            _ => None,
+        };
+        let active: Option<String> = conn
+            .query_row(
+                "SELECT direction FROM active_alerts WHERE device_id = ?1 AND metric = ?2",
+                params![device_id, rule.metric],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let label = crate::units::label(&rule.metric);
+        match (breach, active) {
+            (Some((direction, limit)), active) => {
+                if active.as_deref() != Some(direction) {
+                    events.push((
+                        "alert",
+                        format!(
+                            "{label} {direction} {}: {}",
+                            crate::units::format(&rule.metric, limit),
+                            crate::units::format(&rule.metric, value)
+                        ),
+                    ));
+                }
+                conn.execute(
+                    "INSERT INTO active_alerts (device_id, metric, value, direction, limit_value, since)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT (device_id, metric) DO UPDATE SET value = excluded.value,
+                         since = CASE WHEN active_alerts.direction = excluded.direction
+                                      THEN active_alerts.since ELSE excluded.since END,
+                         direction = excluded.direction, limit_value = excluded.limit_value",
+                    params![device_id, rule.metric, value, direction, limit, now],
+                )?;
+            }
+            (None, Some(_)) => {
+                conn.execute(
+                    "DELETE FROM active_alerts WHERE device_id = ?1 AND metric = ?2",
+                    params![device_id, rule.metric],
+                )?;
+                events.push((
+                    "alert_cleared",
+                    format!(
+                        "{label} back in range: {}",
+                        crate::units::format(&rule.metric, value)
+                    ),
+                ));
+            }
+            (None, None) => {}
+        }
+    }
+    Ok(events)
 }
 
 /// Deletes metrics, events and sessions past their retention.
