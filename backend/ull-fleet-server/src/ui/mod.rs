@@ -342,7 +342,7 @@ async fn device_page(
                     label.visually-hidden for="release" { "Release" }
                     select #release name="release_id" {
                         @for release in &candidates {
-                            option value=(release.id) { (release.version) }
+                            option value=(release.id) { (release_label(release)) }
                         }
                     }
                     button type="submit" { "Update" }
@@ -418,6 +418,23 @@ fn update_text(device: &Device) -> Markup {
                 span.mono { (target) }
             }
         }
+    }
+}
+
+/// "Nov 22 23:06 · 8775b11": build time first, since versions share a long
+/// prefix and get cut off in a narrow select.
+fn release_label(release: &Release) -> String {
+    let mut parts = release.build_date.split_whitespace();
+    let (month, day, _year, time) = (parts.next(), parts.next(), parts.next(), parts.next());
+    let rev = release
+        .version
+        .split_once('+')
+        .map(|(_, rest)| rest.rsplit_once('-').map_or(rest, |(rev, _)| rev));
+    match (month, day, time, rev) {
+        (Some(month), Some(day), Some(time), Some(rev)) => {
+            format!("{month} {day} {} · {rev}", time.get(..5).unwrap_or(time))
+        }
+        _ => release.version.clone(),
     }
 }
 
