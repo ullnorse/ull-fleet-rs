@@ -1,48 +1,59 @@
-use anyhow::Error as AnyhowError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 use tracing::error;
-
-use crate::domain::ota::UploadUpdateError;
 
 pub type AppResult<T> = Result<T, AppError>;
 
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("{0}")]
-    Validation(String),
+    BadRequest(String),
+    #[error("not found")]
+    NotFound,
     #[error("{0}")]
-    UnsupportedMediaType(String),
+    Conflict(String),
+    #[error("login required")]
+    Unauthorized,
     #[error(transparent)]
-    Internal(#[from] AnyhowError),
+    Internal(#[from] anyhow::Error),
 }
 
-impl From<UploadUpdateError> for AppError {
-    fn from(err: UploadUpdateError) -> Self {
-        match err {
-            UploadUpdateError::EmptyFile => Self::Validation("uploaded file is empty".to_string()),
-            UploadUpdateError::BadSignature => Self::Validation(err.to_string()),
-            UploadUpdateError::Unknown(inner) => Self::Internal(inner),
+impl AppError {
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::BadRequest(message.into())
+    }
+
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
+    }
+
+    /// The message shown to the client; internal details stay in the log.
+    pub fn public_message(&self) -> String {
+        match self {
+            Self::Internal(err) => {
+                error!(error = ?err, "internal server error");
+                "an internal error occurred".to_string()
+            }
+            other => other.to_string(),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for AppError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Internal(err.into())
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        match self {
-            Self::Validation(message) => (StatusCode::BAD_REQUEST, message).into_response(),
-            Self::UnsupportedMediaType(message) => {
-                (StatusCode::UNSUPPORTED_MEDIA_TYPE, message).into_response()
-            }
-            Self::Internal(err) => {
-                error!(error = ?err, "internal server error");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "an internal error occurred",
-                )
-                    .into_response()
-            }
-        }
+        (self.status(), self.public_message()).into_response()
     }
 }

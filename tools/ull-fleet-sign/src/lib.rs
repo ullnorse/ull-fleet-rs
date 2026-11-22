@@ -4,6 +4,8 @@
 //! `ull_esp_core::signature` in ull-esp-rs, which verifies on the device; the
 //! shared test vector below keeps the two in step.
 
+pub mod appdesc;
+
 use anyhow::{Context, bail};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
