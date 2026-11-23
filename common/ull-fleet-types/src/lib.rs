@@ -168,11 +168,18 @@ pub enum StreamMessage {
     Snapshot(Box<Snapshot>),
     /// A device changed: check-in, rename, online state, update state.
     Device(DeviceView),
-    DeviceRemoved { id: String },
+    DeviceRemoved {
+        id: String,
+    },
     Event(EventView),
     /// Firmware download progress.
-    Progress { device_id: String, progress: Progress },
-    Releases { releases: Vec<ReleaseView> },
+    Progress {
+        device_id: String,
+        progress: Progress,
+    },
+    Releases {
+        releases: Vec<ReleaseView>,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
