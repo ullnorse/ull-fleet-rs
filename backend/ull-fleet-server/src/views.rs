@@ -67,6 +67,8 @@ pub fn device_view(
         rssi_dbm: device.rssi_dbm,
         uptime_s: device.uptime_s,
         last_ota_error: device.last_ota_error,
+        reset_reason: device.reset_reason,
+        reset_detail: device.reset_detail,
         first_seen: device.first_seen,
         last_seen: device.last_seen,
         poll_interval_s: device.poll_interval_s,

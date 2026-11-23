@@ -284,7 +284,7 @@ impl Fleet {
 
     fn toast_for(&self, event: &EventView) {
         let tone = match event.kind.as_str() {
-            "alert" | "update_failed" => Tone::Critical,
+            "alert" | "update_failed" | "crashed" => Tone::Critical,
             "offline" => Tone::Warning,
             "update" | "alert_cleared" | "online" => Tone::Good,
             "registered" => Tone::Info,

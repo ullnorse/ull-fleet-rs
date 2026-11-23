@@ -97,6 +97,10 @@ CREATE TABLE active_alerts (
     PRIMARY KEY (device_id, metric)
 );
 "#,
+    r#"
+ALTER TABLE devices ADD COLUMN reset_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE devices ADD COLUMN reset_detail TEXT;
+"#,
 ];
 
 #[derive(Clone)]

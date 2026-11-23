@@ -44,7 +44,13 @@ impl TestApp {
     }
 
     async fn checkin(&self, version: &str, uptime: u64, metrics: Value) -> Value {
-        let body = json!({
+        self.checkin_with(version, uptime, json!({ "metrics": metrics }))
+            .await
+    }
+
+    /// A check-in with `extra` fields merged in.
+    async fn checkin_with(&self, version: &str, uptime: u64, extra: Value) -> Value {
+        let mut body = json!({
             "project": PROJECT,
             "version": version,
             "secure_version": secure_version(version),
@@ -53,8 +59,10 @@ impl TestApp {
             "uptime_s": uptime,
             "rssi_dbm": -60,
             "ip": "192.168.1.20",
-            "metrics": metrics,
         });
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
         let (status, _, body) = self
             .send(
                 Request::post(format!("/api/v1/devices/{DEVICE}/checkin"))
@@ -329,6 +337,56 @@ async fn failed_updates_stop_after_three_attempts() {
     let device = app.device().await;
     assert_eq!(device["update"]["state"], "failed");
     assert_eq!(device["update"]["attempts"], 3);
+}
+
+#[tokio::test]
+async fn restart_reasons_become_events() {
+    let app = TestApp::new(|_| {});
+    app.checkin("0.1.0-100", 500, json!({})).await;
+    let (image, signature) = release("0.2.0-200");
+    let (_, body) = app.upload(&image, &signature).await;
+    app.deploy(body["id"].as_i64().unwrap(), Some(&[DEVICE]))
+        .await;
+    app.checkin("0.1.0-100", 510, json!({})).await;
+    app.firmware().await;
+
+    // The new image panicked; the bootloader returned to the old one, which
+    // reports the panic the new image left behind.
+    let panic = "sht3x-ssd1306/src/app.rs:40: boom";
+    app.checkin_with(
+        "0.1.0-100",
+        4,
+        json!({ "reset_reason": "panic", "reset_detail": panic }),
+    )
+    .await;
+    app.checkin_with(
+        "0.1.0-100",
+        30,
+        json!({ "reset_reason": "panic", "reset_detail": panic }),
+    )
+    .await;
+    app.checkin_with("0.1.0-100", 3, json!({ "reset_reason": "power_on" }))
+        .await;
+    app.checkin_with("0.1.0-100", 2, json!({ "reset_reason": "update" }))
+        .await;
+
+    let messages = app.event_messages().await;
+    let crashes = messages
+        .iter()
+        .filter(|m| *m == &format!("Crashed (panic): {panic}"))
+        .count();
+    assert_eq!(crashes, 1, "one event per restart: {messages:?}");
+    assert!(
+        messages.iter().any(|m| m
+            == "Update to 0.2.0-200 failed (1/3): the new firmware crashed and the previous one is back"),
+        "{messages:?}"
+    );
+    assert!(messages.contains(&"Powered on".to_string()));
+    assert!(!messages.iter().any(|m| m == "Restarted"), "{messages:?}");
+
+    let device = app.device().await;
+    assert_eq!(device["reset_reason"], "update");
+    assert_eq!(device["reset_detail"], Value::Null);
 }
 
 #[tokio::test]

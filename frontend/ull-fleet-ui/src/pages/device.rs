@@ -801,6 +801,14 @@ fn DetailsCard(device: RwSignal<DeviceView>) -> impl IntoView {
                     </span>
                 </Row>
                 <Row label="Uptime"><span class="num">{uptime}</span></Row>
+                <Show when=move || device.with(|d| !d.reset_reason.is_empty())>
+                    <Row label="Last restart">
+                        <span class="restart" class:crash=move || device.with(|d| format::is_crash(&d.reset_reason))>
+                            {move || device.with(|d| format::restart_reason(&d.reset_reason))}
+                            {move || device.with(|d| d.reset_detail.clone()).map(|detail| view! { <code class="restart-detail">{detail}</code> })}
+                        </span>
+                    </Row>
+                </Show>
                 <Row label="IP address">{move || device.with(|d| if d.ip.is_empty() { "–".into() } else { d.ip.clone() })}</Row>
                 <Row label="MAC address"><code>{move || device.with(|d| mac(&d.id))}</code></Row>
                 <Row label="App slot">{move || device.with(|d| format!("{} · {}", d.partition, d.ota_state))}</Row>

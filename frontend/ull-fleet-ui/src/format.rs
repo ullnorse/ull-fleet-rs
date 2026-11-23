@@ -182,3 +182,24 @@ pub fn dew_point(temperature: f64, humidity: f64) -> Option<f64> {
     let gamma = (humidity / 100.0).ln() + a * temperature / (b + temperature);
     Some(b * gamma / (a - gamma))
 }
+
+/// The device's reported restart reason, for the details card.
+pub fn restart_reason(reason: &str) -> &'static str {
+    match reason {
+        "panic" => "Crash (panic)",
+        "stall" => "Watchdog: a task stopped",
+        "watchdog" => "Crash (hardware watchdog)",
+        "brownout" => "Supply voltage dip",
+        "power_on" => "Power on",
+        "update" => "Update installed",
+        "rollback" => "Rolled back",
+        "requested" => "On request",
+        "deep_sleep" => "Wake from sleep",
+        _ => "Software reset",
+    }
+}
+
+/// Reasons that mean the firmware failed.
+pub fn is_crash(reason: &str) -> bool {
+    matches!(reason, "panic" | "stall" | "watchdog")
+}

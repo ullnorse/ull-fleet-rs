@@ -31,6 +31,11 @@ pub struct Checkin {
     #[serde(default)]
     pub ip: String,
     pub last_ota_error: Option<String>,
+    /// Why the device last restarted (`panic`, `watchdog`, `power_on`, …).
+    #[serde(default)]
+    pub reset_reason: String,
+    /// The panic message, stalled task or rollback reason.
+    pub reset_detail: Option<String>,
     #[serde(default)]
     pub metrics: BTreeMap<String, f64>,
 }
@@ -127,6 +132,10 @@ impl Checkin {
         if let Some(error) = &self.last_ota_error {
             validate_text("last_ota_error", error, 200)?;
         }
+        validate_text("reset_reason", &self.reset_reason, 16)?;
+        if let Some(detail) = &self.reset_detail {
+            validate_text("reset_detail", detail, 200)?;
+        }
         if self.metrics.len() > MAX_METRICS_PER_CHECKIN {
             return Err(AppError::bad_request(format!(
                 "at most {MAX_METRICS_PER_CHECKIN} metrics per check-in"
@@ -142,6 +151,53 @@ impl Checkin {
         }
         Ok(())
     }
+}
+
+/// Seconds the estimated boot time (`now - uptime`) may drift between
+/// check-ins of one boot: whole-second uptime, request latency.
+const BOOT_TIME_TOLERANCE_S: i64 = 5;
+
+/// Whether the device booted again since its previous check-in. Uptime going
+/// down is not enough: a device that crashes before each next check-in reports
+/// the same short uptime every time, but its boot time moves.
+fn restarted_since(previous: &Previous, now: i64, uptime: i64) -> bool {
+    let boot = now - uptime;
+    let previous_boot = previous.last_seen - previous.uptime_s;
+    uptime < previous.uptime_s || boot - previous_boot > BOOT_TIME_TOLERANCE_S
+}
+
+/// The event for a restart, from the reason the device reports. A restart to
+/// install an update has none: the firmware event covers it.
+fn restart_event(checkin: &Checkin) -> Option<(&'static str, String)> {
+    let detail = checkin.reset_detail.as_deref().unwrap_or("");
+    let with_detail = |text: &str| {
+        if detail.is_empty() {
+            text.to_string()
+        } else {
+            format!("{text}: {detail}")
+        }
+    };
+    Some(match checkin.reset_reason.as_str() {
+        "update" | "deep_sleep" => return None,
+        "panic" => ("crashed", with_detail("Crashed (panic)")),
+        "stall" => (
+            "crashed",
+            with_detail("Restarted by the watchdog, task stopped"),
+        ),
+        "watchdog" => ("crashed", "Crashed (hardware watchdog reset)".to_string()),
+        "brownout" => (
+            "restarted",
+            "Restarted after a supply voltage dip".to_string(),
+        ),
+        "power_on" => ("restarted", "Powered on".to_string()),
+        "rollback" => (
+            "restarted",
+            with_detail("Rolled back to the previous firmware"),
+        ),
+        "requested" => ("restarted", "Restarted on request".to_string()),
+        "" | "software" => ("restarted", "Restarted".to_string()),
+        other => ("restarted", format!("Restarted ({other})")),
+    })
 }
 
 struct Previous {
@@ -185,6 +241,9 @@ pub fn checkin(
 
     let mut events: Vec<(&'static str, String)> = Vec::new();
     let uptime = checkin.uptime_s.min(i64::MAX as u64) as i64;
+    let rebooted = previous
+        .as_ref()
+        .is_some_and(|previous| restarted_since(previous, now, uptime));
     match &previous {
         None => events.push((
             "registered",
@@ -195,8 +254,8 @@ pub fn checkin(
             if gap > offline_after_s(previous.poll_interval_s) {
                 events.push(("online", format!("Back online after {}", duration(gap))));
             }
-            if uptime < previous.uptime_s {
-                events.push(("restarted", "Restarted".to_string()));
+            if rebooted {
+                events.extend(restart_event(checkin));
             }
             if previous.version != checkin.version {
                 events.push((
@@ -230,10 +289,18 @@ pub fn checkin(
         Some(target) => {
             if state == UpdateState::Downloading {
                 attempts += 1;
-                let reason = checkin
-                    .last_ota_error
-                    .clone()
-                    .unwrap_or_else(|| format!("still on {}", checkin.version));
+                let crashed = rebooted
+                    && matches!(
+                        checkin.reset_reason.as_str(),
+                        "panic" | "stall" | "watchdog"
+                    );
+                let reason = match &checkin.last_ota_error {
+                    Some(error) => error.clone(),
+                    None if crashed => {
+                        "the new firmware crashed and the previous one is back".to_string()
+                    }
+                    None => format!("still on {}", checkin.version),
+                };
                 events.push((
                     "update_failed",
                     format!(
@@ -253,8 +320,9 @@ pub fn checkin(
     tx.execute(
         "INSERT INTO devices (id, project, version, secure_version, partition, ota_state, ip,
                               rssi_dbm, uptime_s, last_ota_error, first_seen, last_seen,
-                              update_state, update_attempts, poll_interval_s)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13, ?14)
+                              update_state, update_attempts, poll_interval_s, reset_reason,
+                              reset_detail)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT (id) DO UPDATE SET
              project = excluded.project, version = excluded.version,
              secure_version = excluded.secure_version, partition = excluded.partition,
@@ -262,7 +330,8 @@ pub fn checkin(
              uptime_s = excluded.uptime_s, last_ota_error = excluded.last_ota_error,
              last_seen = excluded.last_seen, update_state = excluded.update_state,
              update_attempts = excluded.update_attempts,
-             poll_interval_s = excluded.poll_interval_s",
+             poll_interval_s = excluded.poll_interval_s,
+             reset_reason = excluded.reset_reason, reset_detail = excluded.reset_detail",
         params![
             device_id,
             checkin.project,
@@ -278,6 +347,8 @@ pub fn checkin(
             state.as_str(),
             attempts,
             poll_interval_s,
+            checkin.reset_reason,
+            checkin.reset_detail,
         ],
     )?;
 
@@ -391,6 +462,8 @@ pub struct Device {
     pub rssi_dbm: Option<i64>,
     pub uptime_s: i64,
     pub last_ota_error: Option<String>,
+    pub reset_reason: String,
+    pub reset_detail: Option<String>,
     pub first_seen: i64,
     pub last_seen: i64,
     pub target_release_id: Option<i64>,
@@ -418,7 +491,7 @@ impl Device {
 const DEVICE_COLUMNS: &str = "d.id, d.name, d.project, d.version, d.secure_version, d.partition,
     d.ota_state, d.ip, d.rssi_dbm, d.uptime_s, d.last_ota_error, d.first_seen, d.last_seen,
     d.target_release_id, r.version, d.update_state, d.update_attempts, d.location,
-    d.poll_interval_s";
+    d.poll_interval_s, d.reset_reason, d.reset_detail";
 
 fn device_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Device> {
     Ok(Device {
@@ -441,6 +514,8 @@ fn device_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Device> {
         update_attempts: row.get(16)?,
         location: row.get(17)?,
         poll_interval_s: row.get(18)?,
+        reset_reason: row.get(19)?,
+        reset_detail: row.get(20)?,
         latest: Vec::new(),
     })
 }
@@ -832,4 +907,31 @@ pub fn prune(conn: &Connection, now: i64, retention_days: u32) -> AppResult<usiz
     removed += conn.execute("DELETE FROM events WHERE ts < ?1", [cutoff])?;
     conn.execute("DELETE FROM sessions WHERE expires_at < ?1", [now])?;
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn previous(last_seen: i64, uptime_s: i64) -> Previous {
+        Previous {
+            version: String::new(),
+            poll_interval_s: 30,
+            uptime_s,
+            last_seen,
+            target_release_id: None,
+            update_state: UpdateState::None,
+            update_attempts: 0,
+        }
+    }
+
+    #[test]
+    fn restart_detection() {
+        // Same boot, 30 s later, a second of drift.
+        assert!(!restarted_since(&previous(1000, 100), 1030, 131));
+        // Uptime went down.
+        assert!(restarted_since(&previous(1000, 100), 1030, 20));
+        // Crash loop: every check-in at 3 s uptime, 26 s apart.
+        assert!(restarted_since(&previous(1000, 3), 1026, 3));
+    }
 }

@@ -12,9 +12,9 @@ what a handful of home devices needs:
 | Page | Content |
 | --- | --- |
 | Devices | Online / alert / updating counts; a card per device grouped by location: status, signal, two readings with 24 h sparklines, update progress or last seen and version. |
-| Device | Status with a check-in countdown; a chart per metric (1 h to 30 d, average line, min/max band, alert limits, crosshair); firmware with an update stepper and download progress; alert limits; details; the device's events; CSV export. |
+| Device | Status with a check-in countdown; last restart reason with the crash message; a chart per metric (1 h to 30 d, average line, min/max band, alert limits, crosshair); firmware with an update stepper and download progress; alert limits; details; the device's events; CSV export. |
 | Trends | One metric across every device that reports it: a line per device in a fixed color, a crosshair listing all values, a legend that hides lines. |
-| Activity | All events grouped by day, filtered by alerts, updates or connectivity. |
+| Activity | All events grouped by day, filtered by alerts (with crashes), updates or connectivity. |
 | Releases | Per project: releases with rollout coverage, install on all, delete unused; upload by drag and drop. |
 | Settings | Theme, check-in intervals, login state, signing key fingerprint, server version. |
 
@@ -73,9 +73,25 @@ Devices are identified by their Wi-Fi MAC address (12 hex digits).
   "rssi_dbm": -61,
   "ip": "192.168.100.42",
   "last_ota_error": null,
+  "reset_reason": "panic",
+  "reset_detail": "sht3x-ssd1306/src/app.rs:40: index out of bounds",
   "metrics": { "temperature_c": 26.23, "humidity_pct": 52.5 }
 }
 ```
+
+`reset_reason` says why the device last booted: `power_on`, `brownout`,
+`watchdog` (hardware), `stall` (a task stopped reporting progress), `panic`,
+`update`, `rollback`, `requested` or `software`. `reset_detail` carries the
+panic location and message, the stalled task or the rollback reason. Both are
+sent on every check-in of a boot.
+
+The server treats a check-in as a new boot when uptime went down or the
+estimated boot time (`now - uptime_s`) moved by more than 5 s; the second case
+catches a device that crashes before each next check-in. A new boot adds an
+event from `reset_reason`: `crashed` for `panic`, `stall` and `watchdog`,
+`restarted` for the rest, none for `update` (the firmware event covers it).
+When a crash follows an update download, the failed attempt says the new
+firmware crashed.
 
 Response: `{"update": true|false, "poll_interval_s": 30}`. The device uses the
 returned interval for its next check-in (5 s while its page is open).

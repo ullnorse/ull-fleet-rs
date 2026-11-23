@@ -95,6 +95,13 @@ pub struct DeviceView {
     pub rssi_dbm: Option<i64>,
     pub uptime_s: i64,
     pub last_ota_error: Option<String>,
+    /// Why the device last restarted: `panic`, `stall`, `watchdog`,
+    /// `brownout`, `power_on`, `update`, `rollback`, …; empty from firmware
+    /// that does not report it.
+    #[serde(default)]
+    pub reset_reason: String,
+    #[serde(default)]
+    pub reset_detail: Option<String>,
     pub first_seen: i64,
     pub last_seen: i64,
     pub online: bool,

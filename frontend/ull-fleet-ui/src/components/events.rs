@@ -10,7 +10,7 @@ use crate::store::use_fleet;
 
 pub fn tone(kind: &str) -> &'static str {
     match kind {
-        "alert" | "update_failed" => "critical",
+        "alert" | "update_failed" | "crashed" => "critical",
         "offline" => "warning",
         "update" | "alert_cleared" | "online" => "good",
         _ => "neutral",
@@ -21,7 +21,7 @@ fn icon(kind: &str) -> Icon {
     match kind {
         "alert" => Icon::Alert,
         "alert_cleared" => Icon::Check,
-        "update_failed" => Icon::Alert,
+        "update_failed" | "crashed" => Icon::Alert,
         "update" => Icon::Check,
         "deploy" => Icon::Rocket,
         "firmware" => Icon::Cpu,
@@ -36,7 +36,7 @@ fn icon(kind: &str) -> Icon {
 /// Which filter chip an event falls under.
 pub fn category(kind: &str) -> &'static str {
     match kind {
-        "alert" | "alert_cleared" => "alerts",
+        "alert" | "alert_cleared" | "crashed" => "alerts",
         "update" | "update_failed" | "deploy" | "firmware" => "updates",
         "offline" | "online" | "restarted" | "registered" => "connectivity",
         _ => "other",
