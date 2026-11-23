@@ -367,7 +367,13 @@ async fn restart_reasons_become_events() {
     .await;
     app.checkin_with("0.1.0-100", 3, json!({ "reset_reason": "power_on" }))
         .await;
-    app.checkin_with("0.1.0-100", 2, json!({ "reset_reason": "update" }))
+    app.checkin_with(
+        "0.1.0-100",
+        2,
+        json!({ "reset_reason": "settings", "reset_detail": "new settings saved" }),
+    )
+    .await;
+    app.checkin_with("0.1.0-100", 1, json!({ "reset_reason": "update" }))
         .await;
 
     let messages = app.event_messages().await;
@@ -382,6 +388,7 @@ async fn restart_reasons_become_events() {
         "{messages:?}"
     );
     assert!(messages.contains(&"Powered on".to_string()));
+    assert!(messages.contains(&"Back from setup mode: new settings saved".to_string()));
     assert!(!messages.iter().any(|m| m == "Restarted"), "{messages:?}");
 
     let device = app.device().await;

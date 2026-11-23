@@ -194,6 +194,8 @@ pub fn restart_reason(reason: &str) -> &'static str {
         "update" => "Update installed",
         "rollback" => "Rolled back",
         "requested" => "On request",
+        "setup" => "Setup mode",
+        "settings" => "After setup",
         "deep_sleep" => "Wake from sleep",
         _ => "Software reset",
     }

@@ -195,6 +195,9 @@ fn restart_event(checkin: &Checkin) -> Option<(&'static str, String)> {
             with_detail("Rolled back to the previous firmware"),
         ),
         "requested" => ("restarted", "Restarted on request".to_string()),
+        "setup" => ("restarted", "Restarted into setup mode".to_string()),
+        // Leaving setup mode: "new settings saved" or "setup timed out".
+        "settings" => ("restarted", with_detail("Back from setup mode")),
         "" | "software" => ("restarted", "Restarted".to_string()),
         other => ("restarted", format!("Restarted ({other})")),
     })
