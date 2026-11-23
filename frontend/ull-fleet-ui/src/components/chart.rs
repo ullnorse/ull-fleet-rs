@@ -438,13 +438,13 @@ pub fn Sparkline(
         // Redraw every 5 minutes as the window slides.
         let to = now.get() / 300 * 300 + 300;
         // The last 24 h, or less for a device with a shorter history (at
-        // least 3 h), so a new device's trend is not squeezed to the edge.
+        // least 1 h), so a new device's trend is not squeezed to the edge.
         let first = points
             .iter()
             .filter(|p| p.2 > 0)
             .map(|p| p.0)
             .find(|t| *t >= to - 86_400);
-        let from = first.map_or(to - 86_400, |t| t.min(to - 10_800));
+        let from = first.map_or(to - 86_400, |t| t.min(to - 3_600));
         let span = (to - from) as f64;
         let values: Vec<(i64, f64, f64)> = points
             .iter()
