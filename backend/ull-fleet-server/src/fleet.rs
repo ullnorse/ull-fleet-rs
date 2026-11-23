@@ -558,9 +558,11 @@ pub fn events_after(conn: &Connection, after_id: i64) -> AppResult<Vec<EventView
 }
 
 pub fn last_event_id(conn: &Connection) -> AppResult<i64> {
-    Ok(conn.query_row("SELECT COALESCE(MAX(id), 0) FROM events", [], |row| {
-        row.get(0)
-    })?)
+    Ok(
+        conn.query_row("SELECT COALESCE(MAX(id), 0) FROM events", [], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 /// One metric in buckets of `range.bucket_s()`, oldest first.
@@ -705,7 +707,11 @@ pub fn set_alert_rules(
                 crate::units::label(&rule.metric)
             )));
         }
-        if [rule.min, rule.max].into_iter().flatten().any(|v| !v.is_finite()) {
+        if [rule.min, rule.max]
+            .into_iter()
+            .flatten()
+            .any(|v| !v.is_finite())
+        {
             return Err(AppError::bad_request("alert limits must be numbers"));
         }
         if let (Some(min), Some(max)) = (rule.min, rule.max)
@@ -719,7 +725,9 @@ pub fn set_alert_rules(
     }
     let tx = conn.transaction()?;
     let exists: bool = tx
-        .query_row("SELECT 1 FROM devices WHERE id = ?1", [device_id], |_| Ok(()))
+        .query_row("SELECT 1 FROM devices WHERE id = ?1", [device_id], |_| {
+            Ok(())
+        })
         .optional()?
         .is_some();
     if !exists {
@@ -733,8 +741,7 @@ pub fn set_alert_rules(
         )?;
     }
     let latest: BTreeMap<String, f64> = {
-        let mut stmt =
-            tx.prepare("SELECT name, value FROM latest_metrics WHERE device_id = ?1")?;
+        let mut stmt = tx.prepare("SELECT name, value FROM latest_metrics WHERE device_id = ?1")?;
         stmt.query_map([device_id], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<_, _>>()?
     };

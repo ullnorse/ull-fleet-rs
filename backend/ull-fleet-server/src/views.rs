@@ -14,7 +14,12 @@ use crate::{AppState, releases};
 /// Events included in a snapshot.
 pub const SNAPSHOT_EVENTS: u32 = 50;
 
-pub fn device_view(conn: &Connection, device: Device, live: &Live, now: i64) -> AppResult<DeviceView> {
+pub fn device_view(
+    conn: &Connection,
+    device: Device,
+    live: &Live,
+    now: i64,
+) -> AppResult<DeviceView> {
     let alert_rules = fleet::alert_rules(conn, &device.id)?;
     let alerts = fleet::active_alerts(conn, &device.id)?;
     let online = device.is_online(now);
@@ -111,7 +116,9 @@ pub fn server_info(state: &AppState, now: i64) -> ServerInfo {
         live_poll_interval_s: config.live_poll_interval.as_secs(),
         retention_days: config.metrics_retention_days,
         auth_required: config.admin_password.is_some(),
-        signing_key: config.ota_public_key.map(|key| ull_fleet_sign::to_hex(&key)),
+        signing_key: config
+            .ota_public_key
+            .map(|key| ull_fleet_sign::to_hex(&key)),
         now,
     }
 }

@@ -53,9 +53,8 @@ async fn main() -> anyhow::Result<()> {
     spawn_maintenance(state.clone());
     live::spawn_offline_monitor(state.clone());
 
-    let listener = TcpListener::bind(listen_addr)
-        .await
-        .with_context(|| format!("failed to listen on {listen_addr}"))?;
+    let listener =
+        listen(listen_addr).with_context(|| format!("failed to listen on {listen_addr}"))?;
     info!("fleet server listening on http://{listen_addr}");
     axum::serve(listener, router(state))
         .with_graceful_shutdown(async {
@@ -63,4 +62,22 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     Ok(())
+}
+
+/// Send buffer per connection. A firmware download counts bytes as they are
+/// handed to the kernel; a small buffer keeps that count close to what the
+/// device has received, so the progress bar is honest. Plenty for a LAN.
+const SEND_BUFFER: u32 = 32 * 1024;
+
+fn listen(addr: std::net::SocketAddr) -> std::io::Result<TcpListener> {
+    let socket = if addr.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()?
+    } else {
+        tokio::net::TcpSocket::new_v6()?
+    };
+    socket.set_reuseaddr(true)?;
+    // Accepted connections inherit it.
+    socket.set_send_buffer_size(SEND_BUFFER)?;
+    socket.bind(addr)?;
+    socket.listen(1024)
 }

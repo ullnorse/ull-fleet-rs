@@ -64,7 +64,11 @@ pub async fn get<T: DeserializeOwned>(url: &str) -> Result<T> {
     check(response).await?.json().await.map_err(network)
 }
 
-pub async fn send<B: Serialize, T: DeserializeOwned>(method: &str, url: &str, body: &B) -> Result<T> {
+pub async fn send<B: Serialize, T: DeserializeOwned>(
+    method: &str,
+    url: &str,
+    body: &B,
+) -> Result<T> {
     let builder = match method {
         "POST" => Request::post(url),
         "PATCH" => Request::patch(url),

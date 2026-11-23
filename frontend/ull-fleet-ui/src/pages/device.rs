@@ -118,9 +118,23 @@ fn Hero(device: RwSignal<DeviceView>) -> impl IntoView {
                                     <span class="status-dot" class:fresh=move || fresh.get()></span>
                                     <span class="status-label">{move || status.get().label()}</span>
                                     <Show when=move || device.with(|d| d.live && d.online)>
-                                        <span class="live-chip" title="This device checks in every few seconds while the page is open">
-                                            {move || device.with(|d| format!("Live · {} s", d.poll_interval_s))}
-                                        </span>
+                                        {move || {
+                                            let live_s = fleet.server.with(|s| s.as_ref().map_or(5, |s| s.live_poll_interval_s));
+                                            let poll_s = device.with(|d| d.poll_interval_s);
+                                            if poll_s <= live_s {
+                                                view! {
+                                                    <span class="live-chip" title="Checks in every few seconds while this page is open">
+                                                        {format!("Live · every {poll_s} s")}
+                                                    </span>
+                                                }.into_any()
+                                            } else {
+                                                view! {
+                                                    <span class="live-chip pending" title="Switches to fast check-ins at its next check-in">
+                                                        "Live from next check-in"
+                                                    </span>
+                                                }.into_any()
+                                            }
+                                        }}
                                     </Show>
                                 </div>
                                 <p class="hero-line">{line}</p>
@@ -177,7 +191,9 @@ fn EditForm(device: RwSignal<DeviceView>, editing: RwSignal<bool>) -> impl IntoV
                 location: Some(location.get_untracked()),
                 alert_rules: None,
             };
-            match api::send::<_, DeviceView>("PATCH", &format!("/api/v1/devices/{id}"), &patch).await {
+            match api::send::<_, DeviceView>("PATCH", &format!("/api/v1/devices/{id}"), &patch)
+                .await
+            {
                 Ok(view) => {
                     device.set(view);
                     editing.set(false);
@@ -250,7 +266,12 @@ fn Readings(device: RwSignal<DeviceView>) -> impl IntoView {
     });
 
     let metrics = Memo::new(move |_| {
-        device.with(|d| d.readings.iter().map(|r| r.name.clone()).collect::<Vec<_>>())
+        device.with(|d| {
+            d.readings
+                .iter()
+                .map(|r| r.name.clone())
+                .collect::<Vec<_>>()
+        })
     });
     let series = RwSignal::new(HashMap::<String, Series>::new());
     let loading = RwSignal::new(false);
@@ -258,7 +279,8 @@ fn Readings(device: RwSignal<DeviceView>) -> impl IntoView {
     let last_fetch = StoredValue::new((None::<Range>, 0i64));
 
     // Refetch on range change, new metrics, or new readings (throttled by range).
-    let latest = Memo::new(move |_| device.with(|d| d.readings.iter().map(|r| r.ts).max().unwrap_or(0)));
+    let latest =
+        Memo::new(move |_| device.with(|d| d.readings.iter().map(|r| r.ts).max().unwrap_or(0)));
     let id_for_fetch = id.clone();
     Effect::new(move |_| {
         let range = range.get();
@@ -303,7 +325,12 @@ fn Readings(device: RwSignal<DeviceView>) -> impl IntoView {
             .server
             .with(|s| s.as_ref().map_or(90, |s| s.poll_interval_s as i64 * 3))
     });
-    let csv = move || format!("/api/v1/devices/{id}/readings.csv?range={}", range.get().as_str());
+    let csv = move || {
+        format!(
+            "/api/v1/devices/{id}/readings.csv?range={}",
+            range.get().as_str()
+        )
+    };
 
     view! {
         <div class="toolbar">
@@ -348,17 +375,25 @@ fn MetricCard(
         my_series.with(|s| {
             let s = s.as_ref()?;
             let lo = s.points.iter().map(|p| p.min).fold(f64::INFINITY, f64::min);
-            let hi = s.points.iter().map(|p| p.max).fold(f64::NEG_INFINITY, f64::max);
+            let hi = s
+                .points
+                .iter()
+                .map(|p| p.max)
+                .fold(f64::NEG_INFINITY, f64::max);
             lo.is_finite().then_some((lo, hi))
         })
     });
     // Dew point next to humidity, when the device also reports temperature.
     let dew_point = Memo::new(move |_| {
-        if units::kind(&name.get_value()) != "humidity" || !name.get_value().starts_with("humidity") {
+        if units::kind(&name.get_value()) != "humidity" || !name.get_value().starts_with("humidity")
+        {
             return None;
         }
         device.with(|d| {
-            let t = d.readings.iter().find(|r| units::kind(&r.name) == "temperature")?;
+            let t = d
+                .readings
+                .iter()
+                .find(|r| units::kind(&r.name) == "temperature")?;
             let h = d.reading(&name.get_value())?;
             format::dew_point(t.value, h.value)
         })
@@ -422,7 +457,9 @@ fn FirmwareCard(device: RwSignal<DeviceView>) -> impl IntoView {
         fleet.releases.with(|releases| {
             releases
                 .iter()
-                .filter(|r| r.project == project && r.version != version && r.secure_version >= secure)
+                .filter(|r| {
+                    r.project == project && r.version != version && r.secure_version >= secure
+                })
                 .cloned()
                 .collect::<Vec<ReleaseView>>()
         })
@@ -621,22 +658,41 @@ fn AlertsCard(device: RwSignal<DeviceView>) -> impl IntoView {
         let id = device.with_untracked(|d| d.id.clone());
         let parse = |text: &str| -> Result<Option<f64>, ()> {
             let t = text.trim().replace(',', ".");
-            if t.is_empty() { Ok(None) } else { t.parse().map(Some).map_err(|_| ()) }
+            if t.is_empty() {
+                Ok(None)
+            } else {
+                t.parse().map(Some).map_err(|_| ())
+            }
         };
         let mut rules = Vec::new();
         for d in draft.get_untracked() {
             let (Ok(min), Ok(max)) = (parse(&d.min), parse(&d.max)) else {
-                fleet.toast(Tone::Critical, "Not saved".into(), format!("{}: limits must be numbers", units::label(&d.metric)), None);
+                fleet.toast(
+                    Tone::Critical,
+                    "Not saved".into(),
+                    format!("{}: limits must be numbers", units::label(&d.metric)),
+                    None,
+                );
                 return;
             };
             if min.is_some() || max.is_some() {
-                rules.push(AlertRule { metric: d.metric, min, max });
+                rules.push(AlertRule {
+                    metric: d.metric,
+                    min,
+                    max,
+                });
             }
         }
         saving.set(true);
         leptos::task::spawn_local(async move {
-            let patch = DevicePatch { name: None, location: None, alert_rules: Some(rules) };
-            match api::send::<_, DeviceView>("PATCH", &format!("/api/v1/devices/{id}"), &patch).await {
+            let patch = DevicePatch {
+                name: None,
+                location: None,
+                alert_rules: Some(rules),
+            };
+            match api::send::<_, DeviceView>("PATCH", &format!("/api/v1/devices/{id}"), &patch)
+                .await
+            {
                 Ok(view) => {
                     draft.set(drafts(&view));
                     device.set(view);

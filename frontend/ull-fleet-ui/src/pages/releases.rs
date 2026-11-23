@@ -61,9 +61,12 @@ fn ProjectCard(project: String) -> impl IntoView {
     let name = StoredValue::new(project.clone());
     let releases = Memo::new(move |_| {
         name.with_value(|p| {
-            fleet
-                .releases
-                .with(|r| r.iter().filter(|r| r.project == *p).cloned().collect::<Vec<_>>())
+            fleet.releases.with(|r| {
+                r.iter()
+                    .filter(|r| r.project == *p)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
         })
     });
     let device_count = Memo::new(move |_| {
@@ -117,7 +120,10 @@ fn ReleaseRow(release: ReleaseView, latest: bool, devices: Memo<i64>) -> impl In
                 Ok(reply) => {
                     let body = match (reply.targeted.len(), reply.skipped.len()) {
                         (0, 0) => "Every device already runs it.".to_string(),
-                        (n, 0) => format!("{n} device{} will update at the next check-in.", if n == 1 { "" } else { "s" }),
+                        (n, 0) => format!(
+                            "{n} device{} will update at the next check-in.",
+                            if n == 1 { "" } else { "s" }
+                        ),
                         (n, s) => format!("{n} queued; {s} skipped: {}", reply.skipped[0].reason),
                     };
                     fleet.toast(Tone::Info, "Rollout started".into(), body, None);
@@ -128,7 +134,9 @@ fn ReleaseRow(release: ReleaseView, latest: bool, devices: Memo<i64>) -> impl In
     };
     let delete = move || {
         leptos::task::spawn_local(async move {
-            if let Err(err) = api::send_empty::<()>("DELETE", &format!("/api/v1/releases/{id}"), None).await {
+            if let Err(err) =
+                api::send_empty::<()>("DELETE", &format!("/api/v1/releases/{id}"), None).await
+            {
                 fleet.error(&err);
             }
         });
@@ -223,12 +231,18 @@ fn UploadCard(open: RwSignal<bool>) -> impl IntoView {
         busy.set(true);
         error.set(None);
         leptos::task::spawn_local(async move {
-            match api::upload_release(&file, &signature.get_untracked(), &notes.get_untracked()).await {
+            match api::upload_release(&file, &signature.get_untracked(), &notes.get_untracked())
+                .await
+            {
                 Ok(release) => {
                     fleet.toast(
                         Tone::Good,
                         "Release uploaded".into(),
-                        format!("{} {}", release.project, format::short_version(&release.version)),
+                        format!(
+                            "{} {}",
+                            release.project,
+                            format::short_version(&release.version)
+                        ),
                         None,
                     );
                     open.set(false);

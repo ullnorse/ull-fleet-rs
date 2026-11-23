@@ -30,7 +30,11 @@ pub async fn serve(uri: Uri) -> Response {
         };
         return (
             [
-                (header::CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).unwrap_or(HeaderValue::from_static("application/octet-stream"))),
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_str(mime.as_ref())
+                        .unwrap_or(HeaderValue::from_static("application/octet-stream")),
+                ),
                 (header::CACHE_CONTROL, HeaderValue::from_static(cache)),
             ],
             file.data,
@@ -40,7 +44,10 @@ pub async fn serve(uri: Uri) -> Response {
     match Dist::get("index.html") {
         Some(file) => (
             [
-                (header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8")),
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/html; charset=utf-8"),
+                ),
                 (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
             ],
             file.data,

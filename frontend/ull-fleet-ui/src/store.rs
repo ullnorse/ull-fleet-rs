@@ -158,7 +158,9 @@ impl Fleet {
                 .collect()
         });
         // Devices without a location go last.
-        entries.sort_by(|a, b| (a.0.is_empty(), &a.0, &a.1, &a.2).cmp(&(b.0.is_empty(), &b.0, &b.1, &b.2)));
+        entries.sort_by(|a, b| {
+            (a.0.is_empty(), &a.0, &a.1, &a.2).cmp(&(b.0.is_empty(), &b.0, &b.1, &b.2))
+        });
         let ids: Vec<String> = entries.into_iter().map(|(_, _, id)| id).collect();
         if self.ids.with_untracked(|current| *current != ids) {
             self.ids.set(ids);
@@ -211,10 +213,9 @@ impl Fleet {
             }
             None => {
                 let id = device.id.clone();
-                self.devices
-                    .update_value(|devices| {
-                        devices.insert(id, ArcRwSignal::new(device));
-                    });
+                self.devices.update_value(|devices| {
+                    devices.insert(id, ArcRwSignal::new(device));
+                });
                 true
             }
         }
@@ -292,7 +293,7 @@ impl Fleet {
         self.toast(
             tone,
             self.device_name(&event.device_id),
-            event.message.clone(),
+            crate::format::tidy_message(&event.message),
             Some(event.device_id.clone()),
         );
     }

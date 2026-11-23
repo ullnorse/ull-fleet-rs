@@ -8,7 +8,8 @@ use rusqlite::Connection;
 
 use crate::error::{AppError, AppResult};
 
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE releases (
     id INTEGER PRIMARY KEY,
     project TEXT NOT NULL,
@@ -73,7 +74,8 @@ CREATE TABLE sessions (
     token_hash TEXT PRIMARY KEY,
     expires_at INTEGER NOT NULL
 );
-"#, r#"
+"#,
+    r#"
 ALTER TABLE devices ADD COLUMN location TEXT NOT NULL DEFAULT '';
 ALTER TABLE devices ADD COLUMN poll_interval_s INTEGER NOT NULL DEFAULT 30;
 
@@ -94,7 +96,8 @@ CREATE TABLE active_alerts (
     since INTEGER NOT NULL,
     PRIMARY KEY (device_id, metric)
 );
-"#];
+"#,
+];
 
 #[derive(Clone)]
 pub struct Db {

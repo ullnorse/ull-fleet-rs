@@ -17,7 +17,9 @@ pub fn LoginPage() -> impl IntoView {
         busy.set(true);
         error.set(None);
         leptos::task::spawn_local(async move {
-            let body = LoginRequest { password: password.get_untracked() };
+            let body = LoginRequest {
+                password: password.get_untracked(),
+            };
             match api::send_empty("POST", "/api/v1/login", Some(&body)).await {
                 Ok(()) => fleet.check_session().await,
                 Err(api::Error::Unauthorized) => error.set(Some("Wrong password.".into())),

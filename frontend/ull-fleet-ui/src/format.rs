@@ -140,8 +140,13 @@ pub fn tidy_message(message: &str) -> String {
     message
         .split(' ')
         .map(|word| {
-            let looks_like_build = word.starts_with(|c: char| c.is_ascii_digit()) && word.contains('+');
-            if looks_like_build { short_version(word) } else { word.to_string() }
+            let looks_like_build =
+                word.starts_with(|c: char| c.is_ascii_digit()) && word.contains('+');
+            if looks_like_build {
+                short_version(word)
+            } else {
+                word.to_string()
+            }
         })
         .collect::<Vec<_>>()
         .join(" ")

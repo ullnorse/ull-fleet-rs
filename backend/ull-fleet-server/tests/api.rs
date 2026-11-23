@@ -108,7 +108,12 @@ impl TestApp {
         let (status, _, body) = self
             .send(Request::get(path).body(Body::empty()).unwrap())
             .await;
-        assert_eq!(status, StatusCode::OK, "{path}: {}", String::from_utf8_lossy(&body));
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{path}: {}",
+            String::from_utf8_lossy(&body)
+        );
         serde_json::from_slice(&body).unwrap()
     }
 
@@ -177,7 +182,9 @@ async fn checkin_registers_device_and_metrics() {
     );
 
     let series = app
-        .get(&format!("/api/v1/devices/{DEVICE}/series?metric=humidity_pct&range=1h"))
+        .get(&format!(
+            "/api/v1/devices/{DEVICE}/series?metric=humidity_pct&range=1h"
+        ))
         .await;
     assert_eq!(series["points"][0]["avg"], 48.0);
     assert_eq!(series["bucket_s"], 20);
@@ -283,7 +290,11 @@ async fn update_flow_keeps_image_and_tracks_success() {
     let (status, _, _) = app.firmware().await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    assert!(app.event_messages().await.contains(&"Updated to 0.2.0-200".to_string()));
+    assert!(
+        app.event_messages()
+            .await
+            .contains(&"Updated to 0.2.0-200".to_string())
+    );
     let device = app.device().await;
     assert_eq!(device["update"]["state"], "none");
     assert_eq!(device["version"], "0.2.0-200");
@@ -357,7 +368,11 @@ async fn login_protects_admin_api() {
         .await;
     assert_ne!(status, StatusCode::UNAUTHORIZED);
     let (status, _, _) = app
-        .send(Request::get("/api/v1/snapshot").body(Body::empty()).unwrap())
+        .send(
+            Request::get("/api/v1/snapshot")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(
@@ -369,7 +384,9 @@ async fn login_protects_admin_api() {
     let (status, _) = app.upload(&image, &signature).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    let (status, _) = app.json("POST", "/api/v1/login", json!({ "password": "wrong" })).await;
+    let (status, _) = app
+        .json("POST", "/api/v1/login", json!({ "password": "wrong" }))
+        .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     let (status, headers, _) = app
@@ -419,7 +436,8 @@ async fn login_protects_admin_api() {
 #[tokio::test]
 async fn rename_location_and_alerts() {
     let app = TestApp::new(|_| {});
-    app.checkin("0.1.0-100", 5, json!({ "humidity_pct": 50.0 })).await;
+    app.checkin("0.1.0-100", 5, json!({ "humidity_pct": 50.0 }))
+        .await;
 
     let (status, device) = app
         .json(
@@ -454,7 +472,8 @@ async fn rename_location_and_alerts() {
     assert!(app.event_messages().await[0].starts_with("Humidity above 45 %"));
 
     // Still high: no second alert event.
-    app.checkin("0.1.0-100", 35, json!({ "humidity_pct": 52.0 })).await;
+    app.checkin("0.1.0-100", 35, json!({ "humidity_pct": 52.0 }))
+        .await;
     assert_eq!(app.device().await["alerts"][0]["value"], 52.0);
     let alerts = app
         .event_messages()
@@ -464,9 +483,13 @@ async fn rename_location_and_alerts() {
         .count();
     assert_eq!(alerts, 1);
 
-    app.checkin("0.1.0-100", 65, json!({ "humidity_pct": 41.0 })).await;
+    app.checkin("0.1.0-100", 65, json!({ "humidity_pct": 41.0 }))
+        .await;
     assert_eq!(app.device().await["alerts"], json!([]));
-    assert_eq!(app.event_messages().await[0], "Humidity back in range: 41 %");
+    assert_eq!(
+        app.event_messages().await[0],
+        "Humidity back in range: 41 %"
+    );
 
     let (status, _, _) = app
         .send(
@@ -537,7 +560,50 @@ async fn ui_shell_is_served_for_client_routes() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     // index.html, or the "not built" hint when frontend/dist is empty.
     let (status, _, _) = app
-        .send(Request::get("/devices/a1b2c3d4e5f6").body(Body::empty()).unwrap())
+        .send(
+            Request::get("/devices/a1b2c3d4e5f6")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await;
     assert!(status == StatusCode::OK || status == StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn download_progress_finishes_on_byte_count() {
+    let app = TestApp::new(|_| {});
+    app.checkin("0.1.0-100", 50, json!({})).await;
+    let (image, signature) = release("0.2.0-200");
+    let (_, body) = app.upload(&image, &signature).await;
+    app.deploy(body["id"].as_i64().unwrap(), None).await;
+    app.checkin("0.1.0-100", 60, json!({})).await;
+
+    let response = app
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/devices/{DEVICE}/firmware"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // Read like hyper does with a Content-Length: stop after the last byte
+    // without polling for the end of the stream, then drop the body.
+    let mut body = response.into_body();
+    let mut received = 0;
+    while received < image.len() {
+        let frame = body.frame().await.unwrap().unwrap();
+        received += frame.into_data().unwrap().len();
+        if received < image.len() {
+            let progress = &app.device().await["update"]["progress"];
+            assert_eq!(progress["done"], false);
+            assert_eq!(progress["total"], image.len());
+        }
+    }
+    drop(body);
+
+    let progress = &app.device().await["update"]["progress"];
+    assert_eq!(progress["sent"], image.len());
+    assert_eq!(progress["done"], true);
 }

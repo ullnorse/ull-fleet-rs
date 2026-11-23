@@ -119,8 +119,16 @@ impl Layout {
         if series.points.is_empty() {
             return None;
         }
-        let mut lo = series.points.iter().map(|p| p.min).fold(f64::INFINITY, f64::min);
-        let mut hi = series.points.iter().map(|p| p.max).fold(f64::NEG_INFINITY, f64::max);
+        let mut lo = series
+            .points
+            .iter()
+            .map(|p| p.min)
+            .fold(f64::INFINITY, f64::min);
+        let mut hi = series
+            .points
+            .iter()
+            .map(|p| p.max)
+            .fold(f64::NEG_INFINITY, f64::max);
         // Show a limit when it is near the data; a far one would flatten the line.
         let reach = (hi - lo).max(min_span(metric));
         let limits: Vec<f64> = limits
@@ -139,7 +147,9 @@ impl Layout {
         for point in &series.points {
             match segments.last_mut() {
                 Some(segment)
-                    if segment.last().is_some_and(|last| point.t - last.t <= max_gap) =>
+                    if segment
+                        .last()
+                        .is_some_and(|last| point.t - last.t <= max_gap) =>
                 {
                     segment.push(*point)
                 }
@@ -249,7 +259,9 @@ pub fn LineChart(
         series.with(|series| {
             series
                 .as_ref()
-                .and_then(|s| metric.with_value(|m| limits.with(|l| Layout::new(s, m, gap_s.get(), l))))
+                .and_then(|s| {
+                    metric.with_value(|m| limits.with(|l| Layout::new(s, m, gap_s.get(), l)))
+                })
                 .map(std::sync::Arc::new)
         })
     });

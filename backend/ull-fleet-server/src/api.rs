@@ -58,7 +58,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/events", get(list_events))
         .route("/api/v1/sparklines", get(sparklines))
         .route("/api/v1/releases", get(list_releases).post(upload_release))
-        .route("/api/v1/releases/{id}", axum::routing::delete(delete_release))
+        .route(
+            "/api/v1/releases/{id}",
+            axum::routing::delete(delete_release),
+        )
         .route("/api/v1/releases/{id}/deploy", post(deploy_release))
 }
 
@@ -166,7 +169,11 @@ impl DownloadTracker {
 
     fn add(&mut self, bytes: usize) {
         self.sent += bytes as u64;
-        if self
+        // With a Content-Length, hyper stops polling after the last byte, so
+        // the end of the stream is never seen: finish on the byte count.
+        if self.sent >= self.total {
+            self.finish();
+        } else if self
             .last_report
             .is_none_or(|last| last.elapsed() >= Self::REPORT_EVERY)
         {
@@ -212,14 +219,20 @@ fn header_value(value: &str) -> AppResult<HeaderValue> {
 // ---------------------------------------------------------------------------
 // Session.
 
-async fn session(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Json<SessionInfo>> {
+async fn session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> AppResult<Json<SessionInfo>> {
     Ok(Json(SessionInfo {
         auth_required: state.config.admin_password.is_some(),
         signed_in: auth::is_admin(&state, &headers).await?,
     }))
 }
 
-async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) -> AppResult<Response> {
+async fn login(
+    State(state): State<AppState>,
+    Json(body): Json<LoginRequest>,
+) -> AppResult<Response> {
     if !auth::password_matches(&state, &body.password) {
         // Slow down guessing.
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -412,10 +425,7 @@ async fn readings_csv(
     for (ts, metric, value) in rows {
         csv.push_str(&format!("{},{ts},{metric},{value}\n", iso_utc(ts)));
     }
-    let disposition = format!(
-        "attachment; filename=\"{id}-{}.csv\"",
-        range.as_str()
-    );
+    let disposition = format!("attachment; filename=\"{id}-{}.csv\"", range.as_str());
     Ok((
         [
             (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
@@ -507,17 +517,17 @@ async fn list_events(
 
 async fn sparklines(_: Admin, State(state): State<AppState>) -> AppResult<Json<Vec<Sparkline>>> {
     Ok(Json(
-        state
-            .db
-            .call(|conn| fleet::sparklines(conn, now()))
-            .await?,
+        state.db.call(|conn| fleet::sparklines(conn, now())).await?,
     ))
 }
 
 // ---------------------------------------------------------------------------
 // Releases.
 
-async fn list_releases(_: Admin, State(state): State<AppState>) -> AppResult<Json<Vec<ReleaseView>>> {
+async fn list_releases(
+    _: Admin,
+    State(state): State<AppState>,
+) -> AppResult<Json<Vec<ReleaseView>>> {
     Ok(Json(state.db.call(|conn| views::releases(conn)).await?))
 }
 
@@ -547,7 +557,9 @@ async fn upload_release(
             .to_string()
     });
     if notes.len() > 500 {
-        return Err(AppError::bad_request("notes must be at most 500 characters"));
+        return Err(AppError::bad_request(
+            "notes must be at most 500 characters",
+        ));
     }
     let validated = releases::validate(&body, signature, state.config.ota_public_key.as_ref())?;
     let release = releases::store(

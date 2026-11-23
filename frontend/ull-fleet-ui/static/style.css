@@ -434,6 +434,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
   border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 12px; font-weight: 600;
 }
 .live-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: live 2s ease-out infinite; }
+.live-chip.pending { color: var(--text-2); background: var(--surface-2); }
+.live-chip.pending::before { animation: breathe 1.2s ease-in-out infinite; }
 .hero-line { font-size: 14px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .hero-meta { font-size: 13px; color: var(--text-3); }
 .edit-form { display: grid; gap: 12px; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
