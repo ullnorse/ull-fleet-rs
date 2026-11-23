@@ -432,45 +432,53 @@ pub fn Sparkline(
 ) -> impl IntoView {
     let id = next_id();
     let gradient = format!("spark-{id}");
-    let span = min_span(&metric) / 2.0;
+    let min_value_span = min_span(&metric) / 2.0;
     let paths = Memo::new(move |_| {
         let points = points.get();
         // Redraw every 5 minutes as the window slides.
         let to = now.get() / 300 * 300 + 300;
-        let from = to - 86_400;
-        let values: Vec<(f64, f64)> = points
+        // The last 24 h, or less for a device with a shorter history (at
+        // least 3 h), so a new device's trend is not squeezed to the edge.
+        let first = points
+            .iter()
+            .filter(|p| p.2 > 0)
+            .map(|p| p.0)
+            .find(|t| *t >= to - 86_400);
+        let from = first.map_or(to - 86_400, |t| t.min(to - 10_800));
+        let span = (to - from) as f64;
+        let values: Vec<(i64, f64, f64)> = points
             .iter()
             .filter(|p| p.0 >= from && p.2 > 0)
             .map(|p| {
-                let x = (p.0 + 900 - from) as f64 / 86_400.0 * 100.0;
-                (x.min(100.0), p.1 / f64::from(p.2))
+                let x = (p.0 + 900 - from) as f64 / span * 100.0;
+                (p.0, x.min(100.0), p.1 / f64::from(p.2))
             })
             .collect();
         if values.len() < 2 {
             return None;
         }
-        let lo = values.iter().map(|v| v.1).fold(f64::INFINITY, f64::min);
-        let hi = values.iter().map(|v| v.1).fold(f64::NEG_INFINITY, f64::max);
-        let (lo, hi) = if hi - lo < span {
+        let lo = values.iter().map(|v| v.2).fold(f64::INFINITY, f64::min);
+        let hi = values.iter().map(|v| v.2).fold(f64::NEG_INFINITY, f64::max);
+        let (lo, hi) = if hi - lo < min_value_span {
             let mid = (hi + lo) / 2.0;
-            (mid - span / 2.0, mid + span / 2.0)
+            (mid - min_value_span / 2.0, mid + min_value_span / 2.0)
         } else {
             (lo, hi)
         };
         let y = |v: f64| 28.0 - (v - lo) / (hi - lo) * 24.0;
         let mut line = String::new();
-        let mut prev_x = None::<f64>;
-        for (x, v) in &values {
+        let mut prev_t = None::<i64>;
+        for (t, x, v) in &values {
             // Break the line over gaps of more than 1.5 hours.
-            let cmd = match prev_x {
-                Some(px) if x - px <= 6.5 => 'L',
+            let cmd = match prev_t {
+                Some(pt) if t - pt <= 5_400 => 'L',
                 _ => 'M',
             };
             line.push_str(&format!("{cmd}{x:.2} {:.2}", y(*v)));
-            prev_x = Some(*x);
+            prev_t = Some(*t);
         }
-        let first = values[0].0;
-        let last = values[values.len() - 1].0;
+        let first = values[0].1;
+        let last = values[values.len() - 1].1;
         let area = format!("{line}L{last:.2} 30L{first:.2} 30Z").replacen('M', "M", 1);
         Some((line, area))
     });
