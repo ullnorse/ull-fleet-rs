@@ -13,6 +13,7 @@ what a handful of home devices needs:
 | --- | --- |
 | Devices | Online / alert / updating counts; a card per device grouped by location: status, signal, two readings with 24 h sparklines, update progress or last seen and version. |
 | Device | Status with a check-in countdown; a chart per metric (1 h to 30 d, average line, min/max band, alert limits, crosshair); firmware with an update stepper and download progress; alert limits; details; the device's events; CSV export. |
+| Trends | One metric across every device that reports it: a line per device in a fixed color, a crosshair listing all values, a legend that hides lines. |
 | Activity | All events grouped by day, filtered by alerts, updates or connectivity. |
 | Releases | Per project: releases with rollout coverage, install on all, delete unused; upload by drag and drop. |
 | Settings | Theme, check-in intervals, login state, signing key fingerprint, server version. |
