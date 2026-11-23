@@ -116,7 +116,7 @@ that does not come back is rolled back by the device and retried up to 3 times.
 | `GET /api/v1/events?device=&before=&limit=` | event log, newest first |
 | `GET /api/v1/sparklines` | 24 h trend per device and metric |
 | `GET/POST /api/v1/releases` | list / upload raw image with `X-Application-Image-Ed25519` |
-| `DELETE /api/v1/releases/{id}` | a release no device runs or targets |
+| `DELETE /api/v1/releases/{id}` | a release no device is updating to |
 | `POST /api/v1/releases/{id}/deploy` | `{"devices": [...]}`, or all devices of the project |
 | `GET /api/v1/session`, `POST /api/v1/login`, `POST /api/v1/logout` | login state |
 
