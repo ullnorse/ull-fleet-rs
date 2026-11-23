@@ -4,3 +4,4 @@ pub mod login;
 pub mod overview;
 pub mod releases;
 pub mod settings;
+pub mod trends;

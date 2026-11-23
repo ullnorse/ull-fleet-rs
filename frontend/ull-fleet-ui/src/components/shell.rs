@@ -8,8 +8,9 @@ use leptos_router::hooks::use_location;
 use crate::icons::{Icon, Svg};
 use crate::store::{Connection, Tone, use_fleet};
 
-const NAV: [(&str, &str, Icon); 4] = [
+const NAV: [(&str, &str, Icon); 5] = [
     ("/", "Devices", Icon::Devices),
+    ("/trends", "Trends", Icon::Trends),
     ("/activity", "Activity", Icon::Activity),
     ("/releases", "Releases", Icon::Releases),
     ("/settings", "Settings", Icon::Settings),

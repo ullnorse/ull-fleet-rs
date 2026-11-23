@@ -79,6 +79,20 @@ fn base(name: &str) -> &str {
 
 /// "temperature_c" → "Temperature", "soil_moisture_pct" → "Soil moisture".
 pub fn label(name: &str) -> String {
+    let acronym = match base(name) {
+        "co2" => Some("CO₂"),
+        "eco2" => Some("eCO₂"),
+        "tvoc" => Some("TVOC"),
+        "voc" => Some("VOC"),
+        "pm1" => Some("PM1"),
+        "pm2_5" | "pm25" => Some("PM2.5"),
+        "pm10" => Some("PM10"),
+        "uv" => Some("UV"),
+        _ => None,
+    };
+    if let Some(acronym) = acronym {
+        return acronym.to_string();
+    }
     let words = base(name).replace('_', " ");
     let mut chars = words.chars();
     match chars.next() {
@@ -162,6 +176,7 @@ mod tests {
         assert_eq!(label("temperature_c"), "Temperature");
         assert_eq!(label("soil_moisture_pct"), "Soil moisture");
         assert_eq!(label("count"), "Count");
+        assert_eq!(label("co2_ppm"), "CO₂");
         assert_eq!(format("temperature_c", 26.234), "26.2 °C");
         assert_eq!(format("humidity_pct", 52.5), "52 %");
         assert_eq!(format("temperature_c", -0.04), "0.0 °C");

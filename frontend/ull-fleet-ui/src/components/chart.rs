@@ -12,14 +12,14 @@ use ull_fleet_types::{Point, Series};
 
 use crate::format;
 
-const W: f64 = 1000.0;
-const H: f64 = 300.0;
+pub(crate) const W: f64 = 1000.0;
+pub(crate) const H: f64 = 300.0;
 /// Vertical room kept free above and below the data, as a fraction of H.
-const PAD: f64 = 0.1;
+pub(crate) const PAD: f64 = 0.1;
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(0);
 
-fn next_id() -> u32 {
+pub(crate) fn next_id() -> u32 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
@@ -45,7 +45,7 @@ fn nice_step(raw: f64) -> f64 {
 }
 
 /// Y domain and tick values: about four ticks, at least `min_span` wide.
-fn y_scale(lo: f64, hi: f64, min_span: f64) -> (f64, f64, Vec<f64>) {
+pub(crate) fn y_scale(lo: f64, hi: f64, min_span: f64) -> (f64, f64, Vec<f64>) {
     let (mut lo, mut hi) = (lo, hi);
     if hi - lo < min_span {
         let mid = (lo + hi) / 2.0;
@@ -66,7 +66,7 @@ fn y_scale(lo: f64, hi: f64, min_span: f64) -> (f64, f64, Vec<f64>) {
 
 /// The smallest span (in the metric's unit) worth showing: keeps a flat
 /// line from turning sensor noise into mountains.
-fn min_span(metric: &str) -> f64 {
+pub(crate) fn min_span(metric: &str) -> f64 {
     match ull_fleet_types::units::decimals(metric) {
         0 => 4.0,
         1 => 1.0,
@@ -75,7 +75,7 @@ fn min_span(metric: &str) -> f64 {
 }
 
 /// Time ticks aligned to local clock boundaries.
-fn x_ticks(from: i64, to: i64) -> Vec<(i64, String)> {
+pub(crate) fn x_ticks(from: i64, to: i64) -> Vec<(i64, String)> {
     const STEPS: [i64; 12] = [
         300, 600, 900, 1800, 3600, 7200, 10_800, 21_600, 43_200, 86_400, 172_800, 604_800,
     ];

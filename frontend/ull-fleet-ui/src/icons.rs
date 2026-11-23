@@ -6,6 +6,7 @@ use leptos::prelude::*;
 pub enum Icon {
     Devices,
     Activity,
+    Trends,
     Releases,
     Settings,
     Back,
@@ -27,6 +28,7 @@ pub enum Icon {
 fn paths(icon: Icon) -> &'static str {
     match icon {
         Icon::Devices => "M4 5h16v10H4z M9 19h6 M12 15v4",
+        Icon::Trends => "M4 4v16h16 M7.5 14.5l3.5-4 3 2.5 5-6",
         Icon::Activity => "M3 12h4l3-8 4 16 3-8h4",
         Icon::Releases => "M12 3l8 4.5v9L12 21l-8-4.5v-9z M12 12l8-4.5 M12 12v9 M12 12L4 7.5",
         Icon::Settings => {

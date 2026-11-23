@@ -15,7 +15,7 @@ use leptos_router::path;
 use components::shell::Shell;
 use pages::{
     activity::ActivityPage, device::DevicePage, login::LoginPage, overview::Overview,
-    releases::ReleasesPage, settings::SettingsPage,
+    releases::ReleasesPage, settings::SettingsPage, trends::TrendsPage,
 };
 use store::{Auth, Fleet};
 
@@ -43,6 +43,7 @@ fn App() -> impl IntoView {
                             <Routes fallback=|| view! { <p class="empty">"Page not found."</p> }>
                                 <Route path=path!("/") view=Overview />
                                 <Route path=path!("/devices/:id") view=DevicePage />
+                                <Route path=path!("/trends") view=TrendsPage />
                                 <Route path=path!("/activity") view=ActivityPage />
                                 <Route path=path!("/releases") view=ReleasesPage />
                                 <Route path=path!("/settings") view=SettingsPage />
